@@ -3,432 +3,587 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Perfect Film Grain (WebGL 2.0 / PCG)</title>
+    <title>Noise Generator (Area Averaging)</title>
     <style>
-        body { 
-            margin: 0; background: #080808; color: #ccc; 
-            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex; height: 100vh; overflow: hidden;
+        :root {
+            --bg: #121212;
+            --surface: #1e1e1e;
+            --primary: #69f0ae; /* Soft Green */
+            --danger: #ff5252;
+            --text: #e0e0e0;
+            --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
 
-        #canvas-wrapper {
-            flex-grow: 1; display: flex; justify-content: center; align-items: center;
-            background-color: #000;
-            background-image: 
-                linear-gradient(45deg, #0d0d0d 25%, transparent 25%), 
-                linear-gradient(-45deg, #0d0d0d 25%, transparent 25%), 
-                linear-gradient(45deg, transparent 75%, #0d0d0d 75%), 
-                linear-gradient(-45deg, transparent 75%, #0d0d0d 75%);
-            background-size: 20px 20px;
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        header {
+            width: 100%;
             padding: 20px;
+            text-align: center;
+            background-color: var(--surface);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }
+
+        h1 { margin: 0; font-size: 1.5rem; font-weight: 300; }
+        .subtitle { font-size: 0.85rem; opacity: 0.7; margin-top: 5px; }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 90%;
+            max-width: 1200px;
+            padding-bottom: 40px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            background: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 180px;
+        }
+
+        label { font-size: 0.75rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary); }
+        
+        input[type="range"] { width: 100%; cursor: pointer; }
+        input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
+
+        .btn {
+            background-color: var(--primary);
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+
+        #fileInput { display: none; }
+
+        .canvas-container {
+            position: relative;
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+            max-height: 80vh;
         }
 
         canvas {
-            box-shadow: 0 0 40px rgba(0,0,0,1.0);
-            max-width: 100%; max-height: 100%; object-fit: contain;
+            max-width: 100%;
+            max-height: 80vh;
+            display: block;
         }
 
-        #controls {
-            width: 320px; background: #111; border-left: 1px solid #222;
-            padding: 20px 25px; display: flex; flex-direction: column; gap: 18px;
-            overflow-y: auto; z-index: 100;
+        #loader, #errorOverlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 10;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
         }
 
-        h1 { margin: 0 0 5px 0; font-size: 1.1rem; color: #fff; letter-spacing: 0.5px; }
-        .citation { font-size: 0.7rem; color: #555; margin-bottom: 5px; line-height: 1.3; }
-        .group-header { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700; color: #555; border-bottom: 1px solid #222; padding-bottom: 4px; margin-bottom: 12px; }
-        .control-row { margin-bottom: 12px; }
-        label { display: flex; justify-content: space-between; font-size: 0.8rem; color: #aaa; margin-bottom: 6px; }
-        .val { font-family: monospace; color: #4fa3d1; font-size: 0.85rem; }
-        .desc { font-size: 0.7rem; color: #444; margin-top: 4px; line-height: 1.2; }
+        #loader { background: rgba(0,0,0,0.7); }
+        #errorOverlay { background: rgba(50,0,0,0.9); border: 2px solid var(--danger); }
+        .error-title { color: var(--danger); font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
+        .error-desc { color: #fff; font-size: 0.9rem; max-width: 400px; }
 
-        input[type="range"] { -webkit-appearance: none; width: 100%; background: transparent; cursor: pointer; }
-        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #4fa3d1; margin-top: -5px; box-shadow: 0 0 8px rgba(79, 163, 209, 0.4); transition: transform 0.1s; }
-        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
-        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: #333; border-radius: 2px; }
-        #uShadowCtrl::-webkit-slider-runnable-track, #uExposure::-webkit-slider-runnable-track { background: linear-gradient(90deg, #333 50%, #444 50%); }
-
-        .btn { background: #222; color: #ccc; border: 1px solid #333; padding: 12px; text-align: center; cursor: pointer; border-radius: 4px; font-size: 0.85rem; transition: 0.2s; font-weight: 600; }
-        .btn:hover { background: #333; border-color: #555; color: #fff; }
-        .btn-primary { background: #164263; border-color: #164263; color: #fff; }
-        .btn-primary:hover { background: #1e5a85; }
-        input[type="file"] { display: none; }
-        .upload-zone { border: 1px dashed #333; padding: 15px; text-align: center; border-radius: 4px; cursor: pointer; transition: 0.2s; color: #888; font-size: 0.85rem; }
-        .upload-zone:hover { background: #1a1a1a; border-color: #555; color: #fff; }
-        #loading { display: none; color: #4fa3d1; font-size: 0.8rem; text-align: center; margin-top: 5px; }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid var(--primary);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        .val-display { float: right; font-weight: normal; color: #fff; }
+        
+        .checkbox-wrapper {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+            margin-top: 23px;
+            background: rgba(255,255,255,0.05);
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        .checkbox-wrapper label { margin: 0; color: #fff; cursor: pointer; text-transform: none; font-size: 0.85rem;}
     </style>
 </head>
 <body>
 
-<div id="canvas-wrapper">
-    <canvas id="glcanvas"></canvas>
-</div>
+<header>
+    <h1>Noise Generator</h1>
+    <div class="subtitle">Area Averaging (Anti-Aliasing) | PCG3D</div>
+</header>
 
-<div id="controls">
-    <div>
-        <h1>Perfect Boolean Grain</h1>
-        <div class="citation">WebGL 2.0 + PCG Hash (No Artifacts)</div>
-    </div>
+<div class="container">
+    <div class="controls">
+        <div class="control-group">
+            <label>Input</label>
+            <button class="btn" onclick="document.getElementById('fileInput').click()">Upload Image</button>
+            <input type="file" id="fileInput" accept="image/*">
+            <span id="fileName" style="font-size: 0.8rem; opacity: 0.7; margin-top:5px;">Default Image Loaded</span>
+        </div>
 
-    <div>
-        <div class="group-header">Source</div>
-        <label class="upload-zone" for="fileInput"><span>📂 Load Image</span></label>
-        <input type="file" id="fileInput" accept="image/*">
-    </div>
+        <div class="control-group">
+            <label for="mixSlider">Mix <span id="mixVal" class="val-display">0.50</span></label>
+            <input type="range" id="mixSlider" min="0" max="1" step="0.01" value="0.5">
+        </div>
 
-    <div>
-        <div class="group-header">Micro-Physics</div>
-        <div class="control-row">
-            <label>Radius <span id="lbl-radius" class="val">1.20px</span></label>
-            <input type="range" id="uMuRadius" min="0.10" max="3.00" step="0.01" value="1.20">
+        <div class="control-group">
+            <label for="ksizeSlider">Patch Size <span id="ksizeVal" class="val-display">5</span></label>
+            <input type="range" id="ksizeSlider" min="2" max="12" step="1" value="5">
         </div>
-        <div class="control-row">
-            <label>Variance <span id="lbl-sigma" class="val">0.20</span></label>
-            <input type="range" id="uSigmaRadius" min="0.00" max="1.00" step="0.01" value="0.20">
-        </div>
-        <div class="control-row">
-            <label>Optical Blur <span id="lbl-blur" class="val">0.50</span></label>
-            <input type="range" id="uBlur" min="0.00" max="1.50" step="0.01" value="0.50">
-        </div>
-    </div>
 
-    <div>
-        <div class="group-header">Exposure</div>
-        <div class="control-row">
-            <label>Exposure (EV) <span id="lbl-exposure" class="val">0.00</span></label>
-            <input type="range" id="uExposure" min="-2.0" max="2.0" step="0.05" value="0.0">
+        <div class="control-group">
+            <label for="densitySlider">Density <span id="densityVal" class="val-display">12.0</span></label>
+            <input type="range" id="densitySlider" min="1" max="25" step="0.5" value="12.0">
         </div>
-        <div class="control-row">
-            <label>Shadow Tone <span id="lbl-shadow" class="val">0.000</span></label>
-            <input type="range" id="uShadowCtrl" min="-0.15" max="0.15" step="0.005" value="0.0">
+
+        <div class="checkbox-wrapper">
+            <input type="checkbox" id="highResToggle">
+            <label for="highResToggle" title="Allow loading large images.">Force Full Res</label>
         </div>
-        <div class="control-row">
-            <label>Seed <span id="lbl-seed" class="val">1</span></label>
-            <input type="range" id="uSeed" min="0" max="1000" step="1" value="1">
+
+        <div class="control-group" style="align-items: flex-end;">
+            <label>&nbsp;</label>
+            <button class="btn" id="saveBtn">Save</button>
         </div>
     </div>
 
-    <div>
-        <div class="group-header">Export</div>
-        <div class="control-row">
-            <label>Scale <span id="lbl-scale" class="val">1x</span></label>
-            <input type="range" id="uScale" min="1" max="4" step="1" value="1">
-            <div style="font-size: 0.7rem; color: #555; text-align: right; margin-top:2px;" id="res-info">Output: 0 x 0</div>
+    <div class="canvas-container" id="dropZone">
+        <div id="loader"><div class="spinner"></div><div style="margin-top:10px">Processing...</div></div>
+        <div id="errorOverlay">
+            <div class="error-title">GPU Limit Exceeded</div>
+            <div class="error-desc" id="errorText">Image too large for this Patch Size.</div>
         </div>
-        <button id="saveBtn" class="btn btn-primary">High-Res Develop</button>
-        <div id="loading">Developing Negative...</div>
+        <canvas id="glCanvas"></canvas>
     </div>
 </div>
 
-<script id="vs" type="x-shader/x-vertex">#version 300 es
-    in vec2 position;
-    out vec2 vUv;
+<script type="x-shader/x-vertex" id="vs-quad">
+    #version 300 es
+    in vec4 a_position;
+    out vec2 v_uv;
     void main() {
-        vUv = position * 0.5 + 0.5;
-        vUv.y = 1.0 - vUv.y; 
-        gl_Position = vec4(position, 0.0, 1.0);
+        v_uv = a_position.xy * 0.5 + 0.5;
+        v_uv.y = 1.0 - v_uv.y;
+        gl_Position = a_position;
     }
 </script>
 
-<script id="fs" type="x-shader/x-fragment">#version 300 es
+<script type="x-shader/x-fragment" id="fs-noise">
+    #version 300 es
     precision highp float;
-
-    uniform sampler2D uImage;
-    uniform vec2 uResolution;
-    uniform float uMuRadius;    
-    uniform float uSigmaRadius; 
-    uniform float uBlur;        
-    uniform float uSeed;
-    uniform float uShadowCtrl;
-    uniform float uExposure;
-
-    in vec2 vUv;
-    out vec4 fragColor;
-
-    #define PI 3.14159265359
-
-    // --- PCG HASH (INTEGER RANDOM) ---
-    // This is superior to float hashing (sin/fract) because it
-    // does not lose precision at high coordinates or small scales.
     
-    // Hash a single uint
-    uint pcg(uint v) {
-        uint state = v * 747796405u + 2891336453u;
-        uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-        return (word >> 22u) ^ word;
+    uniform sampler2D u_image;
+    uniform vec2 u_resolution; 
+    uniform float u_ksize;     
+    uniform float u_density;   
+    
+    in vec2 v_uv;
+    out float outColor; 
+
+    // PCG3D Hash
+    uvec3 pcg3d(uvec3 v) {
+        v = v * 1664525u + 1013904223u;
+        v.x += v.y*v.z; v.y += v.z*v.x; v.z += v.x*v.y;
+        v ^= v >> 16u;
+        v.x += v.y*v.z; v.y += v.z*v.x; v.z += v.x*v.y;
+        return v;
     }
 
-    // Hash a 2D position (uvec2) to a float 0..1
-    float hash21(uvec2 p) {
-        uint s = pcg(p.x ^ pcg(p.y));
-        return float(s) * (1.0 / 4294967296.0);
-    }
-
-    // Hash a 2D position (uvec2) to a vec2 0..1
-    vec2 hash22(uvec2 p) {
-        uint s1 = pcg(p.x ^ pcg(p.y));
-        uint s2 = pcg(p.y ^ pcg(p.x));
-        return vec2(
-            float(s1) * (1.0 / 4294967296.0),
-            float(s2) * (1.0 / 4294967296.0)
-        );
-    }
-
-    // Box-Muller for log-normal radius
-    float randNormal(uvec2 seed) {
-        vec2 u = hash22(seed);
-        // Avoid 0 (log(0) is -inf)
-        u.x = max(u.x, 0.00001); 
-        return sqrt(-2.0 * log(u.x)) * cos(2.0 * PI * u.y);
-    }
-
-    float getDensity(float brightness, float meanArea) {
-        float b = clamp(brightness, 0.0, 0.9999);
-        return -log(1.0 - b) / meanArea;
+    vec3 pcg3d_f(uvec3 v) {
+        uvec3 r = pcg3d(v);
+        return vec3(r) * (1.0 / float(0xffffffffu));
     }
 
     void main() {
-        // --- 1. Grid & Physics Setup ---
-        float effectiveSize = uMuRadius; 
-        float blurPadding = max(uBlur * 2.0, 0.0);
-        float cellSize = max(effectiveSize * 2.2, max(blurPadding, 0.1));
-        
-        vec2 gridUv = vUv * uResolution / cellSize;
-        vec2 cellIdFloat = floor(gridUv);
-        
-        // CONVERT TO INTEGER ID FOR HASHING
-        // Offset by seed to randomize
-        uvec2 cellId = uvec2(ivec2(cellIdFloat)) + uvec2(uint(uSeed * 100.0));
-        
-        float expansion = exp(2.0 * uSigmaRadius * uSigmaRadius);
-        float meanArea = PI * uMuRadius * uMuRadius * expansion;
-        
-        float minDist = 999.0;
+        vec2 raw_pos = gl_FragCoord.xy;
+        vec2 block_index_f = floor(raw_pos / u_ksize);
+        uvec2 block_id = uvec2(block_index_f);
 
-        // --- 2. Grain Generation Loop ---
-        for (int y = -1; y <= 1; y++) {
-            for (int x = -1; x <= 1; x++) {
-                vec2 neighborOff = vec2(float(x), float(y));
-                
-                // Float ID for position calc
-                vec2 neighborIdFloat = cellIdFloat + neighborOff;
-                
-                // Int ID for Hashing
-                uvec2 neighborId = cellId + uvec2(ivec2(x, y)); 
+        vec2 sample_uv = (block_index_f + 0.5) / u_resolution;
+        float pixel_value = texture(u_image, sample_uv).r; 
+        
+        float val_safe = min(pixel_value, 1.000);
+        float n_circles_f = -u_density * log(1.001 - val_safe);
+        
+        vec3 rnd_count = pcg3d_f(uvec3(block_id, 0u)); 
+        float u1 = max(rnd_count.x, 0.000001);
+        float u2 = rnd_count.y;
+        float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
+        
+        int n_circles = int(n_circles_f + normal * 2.0);
+        
+        float accum = 0.0;
+        vec2 local_pos = mod(raw_pos, u_ksize); 
+        float r = u_ksize * 8.4 / 40.0;
+        float r_sq = r * r;
+        float rand_move = floor(u_ksize / 2.0) + r;
+        float center_base = (u_ksize - 1.0) / 2.0;
 
-                // Sample Texture
-                vec2 sampleUv = (neighborIdFloat + 0.5) * cellSize / uResolution;
-                sampleUv = clamp(sampleUv, 0.0, 1.0);
-                
-                vec3 nCol = texture(uImage, sampleUv).rgb;
-                float nBrit = dot(nCol, vec3(0.2126, 0.7152, 0.0722));
-                
-                // Exposure & Shadow
-                float exposedBrit = nBrit * pow(2.0, uExposure);
-                float nEffBrit;
-                if (uShadowCtrl > 0.0) nEffBrit = exposedBrit + uShadowCtrl;
-                else nEffBrit = max(0.0, exposedBrit + uShadowCtrl);
-                
-                // Density
-                float lambda = getDensity(nEffBrit, meanArea);
-                float expectedCount = lambda * (cellSize * cellSize);
-                
-                // Hash for count (High quality PCG)
-                // We mix in a large constant to distinct from position hash
-                float seedVal = hash21(neighborId + uvec2(1923u, 712u)); 
-                
-                int count = int(expectedCount);
-                if (seedVal < fract(expectedCount)) count += 1;
-                if (count > 32) count = 32;
-
-                for (int i = 0; i < 32; i++) {
-                    if (i >= count) break;
-                    
-                    // Unique ID per grain
-                    uvec2 gSeed = neighborId + uvec2(uint(i) * 3141u, uint(i) * 2718u);
-                    
-                    // Position 0..1
-                    vec2 localPos = hash22(gSeed);
-                    vec2 grainPos = neighborIdFloat + localPos; 
-                    
-                    // Log-Normal Radius
-                    float norm = randNormal(gSeed + uvec2(99u, 11u));
-                    float r = uMuRadius * exp(uSigmaRadius * norm);
-                    
-                    vec2 diff = (grainPos - gridUv) * cellSize;
-                    float dist = length(diff);
-                    
-                    minDist = min(minDist, dist - r);
-                }
+        if (n_circles > 0) {
+            for (int i = 0; i < 200; i++) {
+                if (i >= n_circles) break;
+                vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u));
+                float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
+                float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
+                float dx = local_pos.x - targ_x;
+                float dy = local_pos.y - targ_y;
+                if (dx*dx + dy*dy < r_sq) accum += 1.0;
             }
         }
+        
+        // Output Binary noise (0.0 or 1.0)
+        // Averaging happens in the next pass
+        outColor = min(accum, 1.0);
+    }
+</script>
 
-        float coverage = 1.0 - smoothstep(-uBlur, uBlur, minDist);
-        fragColor = vec4(vec3(coverage), 1.0);
+<script type="x-shader/x-fragment" id="fs-composite">
+    #version 300 es
+    precision highp float;
+    
+    uniform sampler2D u_original;
+    uniform sampler2D u_noise;
+    uniform float u_mix;
+    
+    // Added for averaging logic
+    uniform vec2 u_resolution;
+    uniform float u_ksize;
+
+    in vec2 v_uv;
+    out vec4 outColor;
+    
+    void main() {
+        // 1. Get Original Pixel
+        float orig = texture(u_original, v_uv).r;
+        
+        // 2. Average the Noise Block
+        // The noise texture is u_ksize times larger than the original.
+        // Each pixel in the Original maps to a u_ksize * u_ksize block in Noise.
+        
+        // Calculate the UV coordinate of the top-left of the block in the Noise Texture
+        vec2 block_start_uv = floor(v_uv * u_resolution) / u_resolution;
+        
+        // Size of one texel in the Noise Texture
+        vec2 noise_texel_size = 1.0 / (u_resolution * u_ksize);
+        
+        float noise_accum = 0.0;
+        float total_samples = u_ksize * u_ksize;
+        
+        // Loop through the K*K block
+        for(float x = 0.0; x < u_ksize; x += 1.0) {
+            for(float y = 0.0; y < u_ksize; y += 1.0) {
+                // Offset to center of the specific noise texel
+                vec2 offset = vec2(x + 0.5, y + 0.5) * noise_texel_size;
+                noise_accum += texture(u_noise, block_start_uv + offset).r;
+            }
+        }
+        
+        float noise_avg = noise_accum / total_samples;
+        
+        // 3. Mix
+        float mixed = u_mix * noise_avg + (1.0 - u_mix) * orig;
+        outColor = vec4(vec3(mixed), 1.0);
     }
 </script>
 
 <script>
-    const canvas = document.getElementById('glcanvas');
-    // switch to webgl2
+const state = {
+    gl: null,
+    programs: {},
+    textures: { original: null, noiseComp: null },
+    buffers: { quad: null },
+    fbo: null,
+    imageAspect: 1,
+    imageWidth: 0,
+    imageHeight: 0,
+    rawImage: null, 
+    maxTextureSize: 4096,
+    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false }
+};
+
+function init() {
+    const canvas = document.getElementById('glCanvas');
     const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
     
-    if (!gl) {
-        alert("Your browser does not support WebGL 2.0. The PCG hash requires it.");
-    }
+    if (!gl) { alert("WebGL 2.0 not supported."); return; }
+    state.gl = gl;
+    state.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    
+    gl.getExtension('EXT_color_buffer_float');
 
-    let originalImage = null;
-    let imgTexture = gl.createTexture();
-    let width = 800, height = 600;
+    state.programs.noise = createProgram(gl, 'vs-quad', 'fs-noise');
+    state.programs.composite = createProgram(gl, 'vs-quad', 'fs-composite');
     
-    function compile(type, source) {
-        const s = gl.createShader(type);
-        gl.shaderSource(s, source);
-        gl.compileShader(s);
-        if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-            console.error(gl.getShaderInfoLog(s));
-            return null;
-        }
-        return s;
-    }
-    
+    state.buffers.quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+
+    createPlaceholderImage();
+    setupUI();
+}
+
+function createProgram(gl, vsId, fsId) {
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, document.getElementById(vsId).textContent.trim());
+    gl.compileShader(vs);
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(vs));
+
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, document.getElementById(fsId).textContent.trim());
+    gl.compileShader(fs);
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+
     const p = gl.createProgram();
-    gl.attachShader(p, compile(gl.VERTEX_SHADER, document.getElementById('vs').text));
-    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, document.getElementById('fs').text));
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
     gl.linkProgram(p);
-    gl.useProgram(p);
+    return p;
+}
+
+function createTextureFromImage(gl, img, width, height) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     
-    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(p, 'position');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const c = document.createElement('canvas');
+    c.width = width; c.height = height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+    const raw = ctx.getImageData(0,0,width,height).data;
+    const gray = new Uint8Array(width * height);
+    for(let i=0; i<width*height; i++) gray[i] = (raw[i*4] + raw[i*4+1] + raw[i*4+2]) / 3;
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, gray);
     
-    const u = {
-        img: gl.getUniformLocation(p, 'uImage'),
-        res: gl.getUniformLocation(p, 'uResolution'),
-        mu: gl.getUniformLocation(p, 'uMuRadius'),
-        sig: gl.getUniformLocation(p, 'uSigmaRadius'),
-        blur: gl.getUniformLocation(p, 'uBlur'),
-        seed: gl.getUniformLocation(p, 'uSeed'),
-        shdw: gl.getUniformLocation(p, 'uShadowCtrl'),
-        exp: gl.getUniformLocation(p, 'uExposure')
+    // We can use NEAREST here because fs-composite handles the averaging manually
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    
+    return tex;
+}
+
+function initFBO(w, h) {
+    const gl = state.gl;
+    if (state.fbo) gl.deleteFramebuffer(state.fbo);
+    if (state.textures.noiseComp) gl.deleteTexture(state.textures.noiseComp);
+
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    
+    // Use NEAREST for FBO so we can read exact pixels in the loop
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    state.textures.noiseComp = t;
+
+    state.fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return true;
+}
+
+function render() {
+    if (!state.textures.original) return;
+    const gl = state.gl;
+    const { ksize, density, mix } = state.params;
+    
+    const targetW = state.imageWidth * ksize;
+    const targetH = state.imageHeight * ksize;
+    const errorOverlay = document.getElementById('errorOverlay');
+
+    if (targetW > state.maxTextureSize || targetH > state.maxTextureSize) {
+        errorOverlay.style.display = 'flex';
+        document.getElementById('errorText').innerHTML = `Size (${targetW}x${targetH}) > GPU Max (${state.maxTextureSize})`;
+        return; 
+    }
+    errorOverlay.style.display = 'none';
+
+    if (!initFBO(targetW, targetH)) {
+        errorOverlay.style.display = 'flex';
+        document.getElementById('errorText').innerText = "Memory Allocation Failed.";
+        return;
+    }
+
+    // Pass 1: Noise
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+    gl.viewport(0, 0, targetW, targetH);
+    gl.useProgram(state.programs.noise);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
+    gl.uniform1i(gl.getUniformLocation(state.programs.noise, "u_image"), 0);
+    gl.uniform2f(gl.getUniformLocation(state.programs.noise, "u_resolution"), state.imageWidth, state.imageHeight);
+    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_ksize"), ksize);
+    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_density"), density);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // Pass 2: Composite (with Area Averaging)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.canvas.width = state.imageWidth;
+    gl.canvas.height = state.imageHeight;
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    gl.useProgram(state.programs.composite);
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
+    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_original"), 0);
+    
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.noiseComp);
+    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_noise"), 1);
+    
+    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_mix"), mix);
+    gl.uniform2f(gl.getUniformLocation(state.programs.composite, "u_resolution"), state.imageWidth, state.imageHeight);
+    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_ksize"), ksize);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function setupUI() {
+    const ids = ['fileInput', 'mixSlider', 'ksizeSlider', 'densitySlider', 'saveBtn', 'dropZone', 'highResToggle'];
+    const [fi, ms, ks, ds, sb, dz, hr] = ids.map(id => document.getElementById(id));
+
+    fi.onchange = e => handleFile(e.target.files[0]);
+    dz.ondragover = e => { e.preventDefault(); dz.style.border = '2px solid var(--primary)'; };
+    dz.ondragleave = e => { e.preventDefault(); dz.style.border = 'none'; };
+    dz.ondrop = e => { e.preventDefault(); dz.style.border = 'none'; handleFile(e.dataTransfer.files[0]); };
+
+    ms.oninput = e => { 
+        state.params.mix = +e.target.value; 
+        document.getElementById('mixVal').innerText = state.params.mix.toFixed(2); 
+        requestAnimationFrame(render); 
     };
 
-    function setTexture(img) {
-        gl.bindTexture(gl.TEXTURE_2D, imgTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    }
-    
-    gl.bindTexture(gl.TEXTURE_2D, imgTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([30,30,30,255]));
-    
-    const ui = {
-        file: document.getElementById('fileInput'),
-        mu: document.getElementById('uMuRadius'),
-        sig: document.getElementById('uSigmaRadius'),
-        blur: document.getElementById('uBlur'),
-        seed: document.getElementById('uSeed'),
-        scale: document.getElementById('uScale'),
-        shdw: document.getElementById('uShadowCtrl'),
-        exp: document.getElementById('uExposure'),
-        save: document.getElementById('saveBtn'),
-        lbl: {
-            mu: document.getElementById('lbl-radius'),
-            sig: document.getElementById('lbl-sigma'),
-            blur: document.getElementById('lbl-blur'),
-            seed: document.getElementById('lbl-seed'),
-            scale: document.getElementById('lbl-scale'),
-            shdw: document.getElementById('lbl-shadow'),
-            exp: document.getElementById('lbl-exposure')
-        }
+    ks.oninput = e => { 
+        state.params.ksize = +e.target.value; 
+        document.getElementById('ksizeVal').innerText = state.params.ksize;
+        debounceRender(); 
     };
 
-    function updateSize(mult) {
-        canvas.width = width * mult;
-        canvas.height = height * mult;
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        document.getElementById('res-info').innerText = `Output: ${canvas.width} x ${canvas.height}`;
-    }
-
-    function draw() {
-        if(!gl) return;
-        gl.uniform2f(u.res, canvas.width, canvas.height);
-        gl.uniform1f(u.mu, parseFloat(ui.mu.value));
-        gl.uniform1f(u.sig, parseFloat(ui.sig.value));
-        gl.uniform1f(u.blur, parseFloat(ui.blur.value));
-        gl.uniform1f(u.seed, parseFloat(ui.seed.value));
-        gl.uniform1f(u.shdw, parseFloat(ui.shdw.value));
-        gl.uniform1f(u.exp, parseFloat(ui.exp.value));
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
-
-    function bind(el, lbl, fmt) {
-        el.addEventListener('input', () => {
-            lbl.innerText = fmt ? fmt(el.value) : el.value;
-            requestAnimationFrame(draw);
-        });
-    }
+    ds.oninput = e => { 
+        state.params.density = +e.target.value; 
+        document.getElementById('densityVal').innerText = state.params.density.toFixed(1); 
+        debounceRender(); 
+    };
     
-    bind(ui.mu, ui.lbl.mu, v => parseFloat(v).toFixed(2) + 'px');
-    bind(ui.sig, ui.lbl.sig, v => parseFloat(v).toFixed(2));
-    bind(ui.blur, ui.lbl.blur, v => parseFloat(v).toFixed(2));
-    bind(ui.seed, ui.lbl.seed);
-    bind(ui.shdw, ui.lbl.shdw, v => parseFloat(v).toFixed(3));
-    bind(ui.exp, ui.lbl.exp, v => (v > 0 ? '+' : '') + parseFloat(v).toFixed(2));
+    hr.onchange = e => {
+        state.params.highRes = e.target.checked;
+        if(state.rawImage) processImageForTexture(state.rawImage);
+    };
+
+    sb.onclick = () => {
+        const link = document.createElement('a');
+        link.download = 'noise_output.png';
+        link.href = document.getElementById('glCanvas').toDataURL();
+        link.click();
+    };
+}
+
+function handleFile(f) {
+    if (!f || !f.type.startsWith('image/')) return;
+    const r = new FileReader();
+    r.onload = e => {
+        const img = new Image();
+        img.onload = () => { state.rawImage = img; processImageForTexture(img, f.name); };
+        img.src = e.target.result;
+    };
+    r.readAsDataURL(f);
+}
+
+function processImageForTexture(img, name) {
+    if(name) document.getElementById('fileName').innerText = name;
     
-    ui.scale.addEventListener('input', () => {
-        ui.lbl.scale.innerText = ui.scale.value + 'x';
-        document.getElementById('res-info').innerText = `Output: ${width * ui.scale.value} x ${height * ui.scale.value}`;
-    });
+    let w = img.width, h = img.height;
+    const limit = state.params.highRes ? state.maxTextureSize : Math.floor(state.maxTextureSize / 12);
+    
+    if (w > limit || h > limit) {
+        const r = w / h;
+        if (w > h) { w = limit; h = Math.floor(w / r); } else { h = limit; w = Math.floor(h * r); }
+    }
 
-    ui.file.addEventListener('change', e => {
-        const f = e.target.files[0];
-        if(!f) return;
-        const r = new FileReader();
-        r.onload = ev => {
-            const img = new Image();
-            img.onload = () => {
-                originalImage = img;
-                width = img.width;
-                height = img.height;
-                setTexture(img);
-                updateSize(1);
-                draw();
-            };
-            img.src = ev.target.result;
-        };
-        r.readAsDataURL(f);
-    });
+    state.imageWidth = w;
+    state.imageHeight = h;
+    if (state.textures.original) state.gl.deleteTexture(state.textures.original);
+    state.textures.original = createTextureFromImage(state.gl, img, w, h);
+    debounceRender();
+}
 
-    ui.save.addEventListener('click', () => {
-        if(!originalImage) return alert("Open an image first");
-        const s = parseInt(ui.scale.value);
-        document.getElementById('loading').style.display = 'block';
-        setTimeout(() => {
-            updateSize(s);
-            draw();
-            canvas.toBlob(blob => {
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `perfect_grain_${width*s}x${height*s}.png`;
-                a.click();
-                URL.revokeObjectURL(url);
-                updateSize(1);
-                draw();
-                document.getElementById('loading').style.display = 'none';
-            });
-        }, 50);
-    });
+function createPlaceholderImage() {
+    const s = 512, c = document.createElement('canvas');
+    c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0,0,s,s);
+    g.addColorStop(0,"#000"); g.addColorStop(1,"#fff");
+    ctx.fillStyle = g; ctx.fillRect(0,0,s,s);
+    ctx.fillStyle = "#80808080"; ctx.beginPath(); ctx.arc(s/2,s/2,s/3,0,Math.PI*2); ctx.fill();
+    state.rawImage = c; processImageForTexture(c, "Default");
+}
 
-    updateSize(1);
-    draw();
+let tid;
+function debounceRender() {
+    document.getElementById('loader').style.display = 'flex';
+    clearTimeout(tid);
+    tid = setTimeout(() => requestAnimationFrame(() => { render(); document.getElementById('loader').style.display = 'none'; }), 50);
+}
 
+window.onload = init;
 </script>
 </body>
 </html>
