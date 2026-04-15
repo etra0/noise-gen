@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Noise Generator (RGB Area Averaging)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #121212;
+            --surface: #1e1e1e;
+            --primary: #69f0ae;
+            --danger: #ff5252;
+            --text: #e0e0e0;
+            --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        header {
+            width: 100%;
+            padding: 20px;
+            text-align: center;
+            background-color: var(--surface);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }
+
+        h1 { margin: 0; font-size: 1.5rem; font-weight: 300; }
+        .subtitle { font-size: 0.85rem; opacity: 0.7; margin-top: 5px; }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 90%;
+            max-width: 1200px;
+            padding-bottom: 40px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            background: var(--surface);
+            padding: 20px;
+            border-radius: 8px;
+            justify-content: center;
+            align-items: flex-end; 
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 160px;
+        }
+
+        label { font-size: 0.75rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary); }
+        
+        input[type="range"] { width: 100%; cursor: pointer; }
+        input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
+        
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            font-family: var(--font);
+            cursor: pointer;
+            outline: none;
+        }
+        select:focus { border-color: var(--primary); }
+        select option { background: var(--surface); color: white; }
+
+        .btn {
+            background-color: var(--primary);
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: opacity 0.2s;
+            height: 35px;
+        }
+        .btn:hover { opacity: 0.9; }
+
+        #fileInput { display: none; }
+
+        .canvas-container {
+            position: relative;
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+            max-height: 80vh;
+        }
+
+        canvas {
+            max-width: 100%;
+            max-height: 80vh;
+            display: block;
+        }
+
+        #loader, #errorOverlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 10;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #loader { background: rgba(0,0,0,0.7); }
+        #errorOverlay { background: rgba(50,0,0,0.9); border: 2px solid var(--danger); }
+        .error-title { color: var(--danger); font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
+        .error-desc { color: #fff; font-size: 0.9rem; max-width: 400px; }
+
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid var(--primary);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        .val-display { float: right; font-weight: normal; color: #fff; }
+        
+        .checkbox-wrapper {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.05);
+            padding: 8px 12px;
+            border-radius: 4px;
+            height: 35px;
+            box-sizing: border-box;
+        }
+        .checkbox-wrapper label { margin: 0; color: #fff; cursor: pointer; text-transform: none; font-size: 0.85rem;}
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Color Noise Generator</h1>
+    <div class="subtitle">Independent RGB Channels | Area Averaging | PCG3D</div>
+</header>
+
+<div class="container">
+    <div class="controls">
+        <div class="control-group" style="align-items: flex-start;">
+            <label>Input</label>
+            <button class="btn" onclick="document.getElementById('fileInput').click()">Upload Image</button>
+            <input type="file" id="fileInput" accept="image/*">
+            <span id="fileName" style="font-size: 0.75rem; opacity: 0.7; margin-top:5px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Default (Color)</span>
+        </div>
+
+        <div class="control-group">
+            <label for="mixSlider">Mix <span id="mixVal" class="val-display">0.50</span></label>
+            <input type="range" id="mixSlider" min="0" max="1" step="0.01" value="0.5">
+        </div>
+
+        <div class="control-group">
+            <label for="ksizeSlider">Patch Size <span id="ksizeVal" class="val-display">5</span></label>
+            <input type="range" id="ksizeSlider" min="2" max="12" step="1" value="5">
+        </div>
+
+        <div class="control-group">
+            <label for="densitySlider">Density <span id="densityVal" class="val-display">12.0</span></label>
+            <input type="range" id="densitySlider" min="1" max="25" step="0.5" value="12.0">
+        </div>
+
+        <div class="checkbox-wrapper">
+            <input type="checkbox" id="highResToggle">
+            <label for="highResToggle" title="Allow loading large images.">Force Full Res</label>
+        </div>
+        
+        <div class="control-group" style="min-width: 100px;">
+            <label for="formatSelect">Format</label>
+            <select id="formatSelect">
+                <option value="jpeg">JPG</option>
+                <option value="png">PNG</option>
+            </select>
+        </div>
+
+        <div class="control-group" id="qualityGroup">
+            <label for="qualitySlider">Quality <span id="qualityVal" class="val-display">95%</span></label>
+            <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.01" value="0.95">
+        </div>
+
+        <div class="control-group">
+            <button class="btn" id="saveBtn">Save JPG</button>
+        </div>
+    </div>
+
+    <div class="canvas-container" id="dropZone">
+        <div id="loader"><div class="spinner"></div><div style="margin-top:10px">Processing...</div></div>
+        <div id="errorOverlay">
+            <div class="error-title">GPU Limit Exceeded</div>
+            <div class="error-desc" id="errorText">Image too large for this Patch Size.</div>
+        </div>
+        <canvas id="glCanvas"></canvas>
+    </div>
+</div>
+
+<script type="x-shader/x-vertex" id="vs-quad">
+    #version 300 es
+    in vec4 a_position;
+    out vec2 v_uv;
+    void main() {
+        v_uv = a_position.xy * 0.5 + 0.5;
+        v_uv.y = 1.0 - v_uv.y;
+        gl_Position = a_position;
+    }
+</script>
+
+<script type="x-shader/x-fragment" id="fs-noise">
+    #version 300 es
+    precision highp float;
+    
+    uniform sampler2D u_image;
+    uniform vec2 u_resolution; 
+    uniform float u_ksize;     
+    uniform float u_density;   
+    
+    in vec2 v_uv;
+    out vec4 outColor; 
+
+    // PCG3D Hash
+    uvec3 pcg3d(uvec3 v) {
+        v = v * 1664525u + 1013904223u;
+        v.x += v.y*v.z; v.y += v.z*v.x; v.z += v.x*v.y;
+        v ^= v >> 16u;
+        v.x += v.y*v.z; v.y += v.z*v.x; v.z += v.x*v.y;
+        return v;
+    }
+
+    vec3 pcg3d_f(uvec3 v) {
+        uvec3 r = pcg3d(v);
+        return vec3(r) * (1.0 / float(0xffffffffu));
+    }
+
+    void main() {
+        vec2 raw_pos = gl_FragCoord.xy;
+        vec2 block_index_f = floor(raw_pos / u_ksize);
+        uvec2 block_id = uvec2(block_index_f);
+
+        vec2 sample_uv = (block_index_f + 0.5) / u_resolution;
+        
+        // Extract RGB instead of just R
+        vec3 pixel_val = texture(u_image, sample_uv).rgb; 
+        
+        vec3 val_safe = min(pixel_val, vec3(1.000));
+        vec3 n_circles_f = -u_density * log(vec3(1.001) - val_safe);
+        
+        vec3 accum = vec3(0.0);
+        vec2 local_pos = mod(raw_pos, u_ksize); 
+        float r = u_ksize * 8.4 / 40.0;
+        float r_sq = r * r;
+        float rand_move = floor(u_ksize / 2.0) + r;
+        float center_base = (u_ksize - 1.0) / 2.0;
+
+        // Loop over the 3 color channels independently
+        for (uint c = 0u; c < 3u; c++) {
+            // Include channel index in the seed so noise is uncorrelated across RGB
+            vec3 rnd_count = pcg3d_f(uvec3(block_id, c)); 
+            float u1 = max(rnd_count.x, 0.000001);
+            float u2 = rnd_count.y;
+            float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
+            
+            // Note: GLSL arrays/vectors need to be indexed by integer
+            int n_circles = int(n_circles_f[int(c)] + normal * 2.0);
+            
+            if (n_circles > 0) {
+                for (int i = 0; i < 200; i++) {
+                    if (i >= n_circles) break;
+                    // Seed shift (c * 5000u) ensures entirely different coordinates for each channel
+                    vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u + c * 5000u));
+                    float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
+                    float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
+                    float dx = local_pos.x - targ_x;
+                    float dy = local_pos.y - targ_y;
+                    
+                    if (dx*dx + dy*dy < r_sq) {
+                        if (c == 0u) accum.r += 1.0;
+                        else if (c == 1u) accum.g += 1.0;
+                        else accum.b += 1.0;
+                    }
+                }
+            }
+        }
+        
+        outColor = vec4(min(accum, vec3(1.0)), 1.0);
+    }
+</script>
+
+<script type="x-shader/x-fragment" id="fs-composite">
+    #version 300 es
+    precision highp float;
+    
+    uniform sampler2D u_original;
+    uniform sampler2D u_noise;
+    uniform float u_mix;
+    
+    uniform vec2 u_resolution;
+    uniform float u_ksize;
+
+    in vec2 v_uv;
+    out vec4 outColor;
+    
+    void main() {
+        // Read full RGB
+        vec3 orig = texture(u_original, v_uv).rgb;
+        
+        vec2 block_start_uv = floor(v_uv * u_resolution) / u_resolution;
+        vec2 noise_texel_size = 1.0 / (u_resolution * u_ksize);
+        
+        // Accumulate full RGB
+        vec3 noise_accum = vec3(0.0);
+        float total_samples = u_ksize * u_ksize;
+        
+        for(float x = 0.0; x < u_ksize; x += 1.0) {
+            for(float y = 0.0; y < u_ksize; y += 1.0) {
+                vec2 offset = vec2(x + 0.5, y + 0.5) * noise_texel_size;
+                noise_accum += texture(u_noise, block_start_uv + offset).rgb;
+            }
+        }
+        
+        vec3 noise_avg = noise_accum / total_samples;
+        
+        // Mix channels independently
+        vec3 mixed = mix(orig, noise_avg, u_mix);
+        outColor = vec4(mixed, 1.0);
+    }
+</script>
+
+<script>
+const state = {
+    gl: null,
+    programs: {},
+    textures: { original: null, noiseComp: null },
+    buffers: { quad: null },
+    fbo: null,
+    imageAspect: 1,
+    imageWidth: 0,
+    imageHeight: 0,
+    rawImage: null,
+    exifData: null,
+    maxTextureSize: 4096,
+    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false, format: 'jpeg', quality: 0.95 }
+};
+
+function init() {
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+    
+    if (!gl) { alert("WebGL 2.0 not supported."); return; }
+    state.gl = gl;
+    state.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    
+    gl.getExtension('EXT_color_buffer_float');
+
+    state.programs.noise = createProgram(gl, 'vs-quad', 'fs-noise');
+    state.programs.composite = createProgram(gl, 'vs-quad', 'fs-composite');
+    
+    state.buffers.quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+
+    createPlaceholderImage();
+    setupUI();
+}
+
+function createProgram(gl, vsId, fsId) {
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, document.getElementById(vsId).textContent.trim());
+    gl.compileShader(vs);
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(vs));
+
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, document.getElementById(fsId).textContent.trim());
+    gl.compileShader(fs);
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    return p;
+}
+
+function createTextureFromImage(gl, img, width, height) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    
+    const c = document.createElement('canvas');
+    c.width = width; c.height = height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // Changed from gl.R8 grayscale logic to native full RGBA texture loading
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    
+    return tex;
+}
+
+function initFBO(w, h) {
+    const gl = state.gl;
+    if (state.fbo) gl.deleteFramebuffer(state.fbo);
+    if (state.textures.noiseComp) gl.deleteTexture(state.textures.noiseComp);
+
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    
+    // Changed internal format to RGBA8 to accommodate full color noise patterns
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    state.textures.noiseComp = t;
+
+    state.fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return true;
+}
+
+function render() {
+    if (!state.textures.original) return;
+    const gl = state.gl;
+    const { ksize, density, mix } = state.params;
+    
+    const targetW = state.imageWidth * ksize;
+    const targetH = state.imageHeight * ksize;
+    const errorOverlay = document.getElementById('errorOverlay');
+
+    if (targetW > state.maxTextureSize || targetH > state.maxTextureSize) {
+        errorOverlay.style.display = 'flex';
+        document.getElementById('errorText').innerHTML = `Size (${targetW}x${targetH}) > GPU Max (${state.maxTextureSize})`;
+        return; 
+    }
+    errorOverlay.style.display = 'none';
+
+    if (!initFBO(targetW, targetH)) {
+        errorOverlay.style.display = 'flex';
+        document.getElementById('errorText').innerText = "Memory Allocation Failed.";
+        return;
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+    gl.viewport(0, 0, targetW, targetH);
+    gl.useProgram(state.programs.noise);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
+    gl.uniform1i(gl.getUniformLocation(state.programs.noise, "u_image"), 0);
+    gl.uniform2f(gl.getUniformLocation(state.programs.noise, "u_resolution"), state.imageWidth, state.imageHeight);
+    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_ksize"), ksize);
+    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_density"), density);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.canvas.width = state.imageWidth;
+    gl.canvas.height = state.imageHeight;
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    gl.useProgram(state.programs.composite);
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
+    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_original"), 0);
+    
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, state.textures.noiseComp);
+    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_noise"), 1);
+    
+    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_mix"), mix);
+    gl.uniform2f(gl.getUniformLocation(state.programs.composite, "u_resolution"), state.imageWidth, state.imageHeight);
+    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_ksize"), ksize);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function setupUI() {
+    const ids = ['fileInput', 'mixSlider', 'ksizeSlider', 'densitySlider', 'saveBtn', 'dropZone', 'highResToggle', 'formatSelect', 'qualitySlider', 'qualityGroup'];
+    const [fi, ms, ks, ds, sb, dz, hr, fsel, qSlider, qGroup] = ids.map(id => document.getElementById(id));
+
+    fi.onchange = e => handleFile(e.target.files[0]);
+    dz.ondragover = e => { e.preventDefault(); dz.style.border = '2px solid var(--primary)'; };
+    dz.ondragleave = e => { e.preventDefault(); dz.style.border = 'none'; };
+    dz.ondrop = e => { e.preventDefault(); dz.style.border = 'none'; handleFile(e.dataTransfer.files[0]); };
+
+    ms.oninput = e => { 
+        state.params.mix = +e.target.value; 
+        document.getElementById('mixVal').innerText = state.params.mix.toFixed(2); 
+        requestAnimationFrame(render); 
+    };
+
+    ks.oninput = e => { 
+        state.params.ksize = +e.target.value; 
+        document.getElementById('ksizeVal').innerText = state.params.ksize;
+        debounceRender(); 
+    };
+
+    ds.oninput = e => { 
+        state.params.density = +e.target.value; 
+        document.getElementById('densityVal').innerText = state.params.density.toFixed(1); 
+        debounceRender(); 
+    };
+    
+    hr.onchange = e => {
+        state.params.highRes = e.target.checked;
+        if(state.rawImage) processImageForTexture(state.rawImage);
+    };
+
+    fsel.onchange = e => {
+        state.params.format = e.target.value;
+        qGroup.style.display = state.params.format === 'jpeg' ? 'flex' : 'none';
+        sb.innerText = `Save ${state.params.format.toUpperCase()}`;
+    };
+
+    qSlider.oninput = e => {
+        state.params.quality = parseFloat(e.target.value);
+        document.getElementById('qualityVal').innerText = Math.round(state.params.quality * 100) + '%';
+    };
+
+    sb.onclick = () => {
+        const isJpeg = state.params.format === 'jpeg';
+        const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
+        
+        let dataUrl = document.getElementById('glCanvas').toDataURL(mimeType, state.params.quality);
+
+        if (isJpeg && state.exifData) {
+            try {
+                const exifStr = piexif.dump(state.exifData);
+                dataUrl = piexif.insert(exifStr, dataUrl);
+            } catch (err) {
+                console.warn("Failed to insert EXIF data:", err);
+            }
+        }
+
+        const link = document.createElement('a');
+        link.download = `color_noise_output.${isJpeg ? 'jpg' : 'png'}`;
+        link.href = dataUrl;
+        link.click();
+    };
+}
+
+function handleFile(f) {
+    if (!f || !f.type.startsWith('image/')) return;
+    const r = new FileReader();
+    r.onload = e => {
+        if (f.type === 'image/jpeg') {
+            try {
+                state.exifData = piexif.load(e.target.result);
+            } catch (err) {
+                state.exifData = null;
+                console.warn("Could not load EXIF data", err);
+            }
+        } else {
+            state.exifData = null; 
+        }
+
+        const img = new Image();
+        img.onload = () => { state.rawImage = img; processImageForTexture(img, f.name); };
+        img.src = e.target.result;
+    };
+    r.readAsDataURL(f);
+}
+
+function processImageForTexture(img, name) {
+    if(name) document.getElementById('fileName').innerText = name;
+    
+    let w = img.width, h = img.height;
+    const limit = state.params.highRes ? state.maxTextureSize : Math.floor(state.maxTextureSize / 12);
+    
+    if (w > limit || h > limit) {
+        const r = w / h;
+        if (w > h) { w = limit; h = Math.floor(w / r); } else { h = limit; w = Math.floor(h * r); }
+    }
+
+    state.imageWidth = w;
+    state.imageHeight = h;
+    if (state.textures.original) state.gl.deleteTexture(state.textures.original);
+    state.textures.original = createTextureFromImage(state.gl, img, w, h);
+    debounceRender();
+}
+
+function createPlaceholderImage() {
+    const s = 512, c = document.createElement('canvas');
+    c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    
+    // Updated to a colorful default so you can immediately test the RGB separation 
+    const g = ctx.createLinearGradient(0,0,s,s);
+    g.addColorStop(0,"#ff0055"); 
+    g.addColorStop(0.5,"#00ffaa"); 
+    g.addColorStop(1,"#5500ff");
+    ctx.fillStyle = g; 
+    ctx.fillRect(0,0,s,s);
+    ctx.fillStyle = "#ffffffaa"; 
+    ctx.beginPath(); 
+    ctx.arc(s/2,s/2,s/3,0,Math.PI*2); 
+    ctx.fill();
+    
+    state.rawImage = c; processImageForTexture(c, "Default (Color)");
+}
+
+let tid;
+function debounceRender() {
+    document.getElementById('loader').style.display = 'flex';
+    clearTimeout(tid);
+    tid = setTimeout(() => requestAnimationFrame(() => { render(); document.getElementById('loader').style.display = 'none'; }), 50);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
