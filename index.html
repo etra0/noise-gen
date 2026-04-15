@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Noise Generator (Area Averaging)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.min.js"></script>
+
     <style>
         :root {
             --bg: #121212;
             --surface: #1e1e1e;
-            --primary: #69f0ae; /* Soft Green */
+            --primary: #69f0ae;
             --danger: #ff5252;
             --text: #e0e0e0;
             --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -54,20 +57,33 @@
             padding: 20px;
             border-radius: 8px;
             justify-content: center;
-            align-items: center;
+            align-items: flex-end; /* Align to bottom for varying heights */
         }
 
         .control-group {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            min-width: 180px;
+            min-width: 160px;
         }
 
         label { font-size: 0.75rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary); }
         
         input[type="range"] { width: 100%; cursor: pointer; }
         input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
+        
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            font-family: var(--font);
+            cursor: pointer;
+            outline: none;
+        }
+        select:focus { border-color: var(--primary); }
+        select option { background: var(--surface); color: white; }
 
         .btn {
             background-color: var(--primary);
@@ -79,6 +95,7 @@
             font-weight: bold;
             font-size: 0.9rem;
             transition: opacity 0.2s;
+            height: 35px;
         }
         .btn:hover { opacity: 0.9; }
 
@@ -137,10 +154,11 @@
             flex-direction: row;
             align-items: center;
             gap: 10px;
-            margin-top: 23px;
             background: rgba(255,255,255,0.05);
             padding: 8px 12px;
             border-radius: 4px;
+            height: 35px;
+            box-sizing: border-box;
         }
         .checkbox-wrapper label { margin: 0; color: #fff; cursor: pointer; text-transform: none; font-size: 0.85rem;}
     </style>
@@ -154,11 +172,11 @@
 
 <div class="container">
     <div class="controls">
-        <div class="control-group">
+        <div class="control-group" style="align-items: flex-start;">
             <label>Input</label>
             <button class="btn" onclick="document.getElementById('fileInput').click()">Upload Image</button>
             <input type="file" id="fileInput" accept="image/*">
-            <span id="fileName" style="font-size: 0.8rem; opacity: 0.7; margin-top:5px;">Default Image Loaded</span>
+            <span id="fileName" style="font-size: 0.75rem; opacity: 0.7; margin-top:5px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Default</span>
         </div>
 
         <div class="control-group">
@@ -180,10 +198,22 @@
             <input type="checkbox" id="highResToggle">
             <label for="highResToggle" title="Allow loading large images.">Force Full Res</label>
         </div>
+        
+        <div class="control-group" style="min-width: 100px;">
+            <label for="formatSelect">Format</label>
+            <select id="formatSelect">
+                <option value="jpeg">JPG</option>
+                <option value="png">PNG</option>
+            </select>
+        </div>
 
-        <div class="control-group" style="align-items: flex-end;">
-            <label>&nbsp;</label>
-            <button class="btn" id="saveBtn">Save</button>
+        <div class="control-group" id="qualityGroup">
+            <label for="qualitySlider">Quality <span id="qualityVal" class="val-display">95%</span></label>
+            <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.01" value="0.95">
+        </div>
+
+        <div class="control-group">
+            <button class="btn" id="saveBtn">Save JPG</button>
         </div>
     </div>
 
@@ -271,8 +301,6 @@
             }
         }
         
-        // Output Binary noise (0.0 or 1.0)
-        // Averaging happens in the next pass
         outColor = min(accum, 1.0);
     }
 </script>
@@ -285,7 +313,6 @@
     uniform sampler2D u_noise;
     uniform float u_mix;
     
-    // Added for averaging logic
     uniform vec2 u_resolution;
     uniform float u_ksize;
 
@@ -293,26 +320,16 @@
     out vec4 outColor;
     
     void main() {
-        // 1. Get Original Pixel
         float orig = texture(u_original, v_uv).r;
         
-        // 2. Average the Noise Block
-        // The noise texture is u_ksize times larger than the original.
-        // Each pixel in the Original maps to a u_ksize * u_ksize block in Noise.
-        
-        // Calculate the UV coordinate of the top-left of the block in the Noise Texture
         vec2 block_start_uv = floor(v_uv * u_resolution) / u_resolution;
-        
-        // Size of one texel in the Noise Texture
         vec2 noise_texel_size = 1.0 / (u_resolution * u_ksize);
         
         float noise_accum = 0.0;
         float total_samples = u_ksize * u_ksize;
         
-        // Loop through the K*K block
         for(float x = 0.0; x < u_ksize; x += 1.0) {
             for(float y = 0.0; y < u_ksize; y += 1.0) {
-                // Offset to center of the specific noise texel
                 vec2 offset = vec2(x + 0.5, y + 0.5) * noise_texel_size;
                 noise_accum += texture(u_noise, block_start_uv + offset).r;
             }
@@ -320,7 +337,6 @@
         
         float noise_avg = noise_accum / total_samples;
         
-        // 3. Mix
         float mixed = u_mix * noise_avg + (1.0 - u_mix) * orig;
         outColor = vec4(vec3(mixed), 1.0);
     }
@@ -336,9 +352,11 @@ const state = {
     imageAspect: 1,
     imageWidth: 0,
     imageHeight: 0,
-    rawImage: null, 
+    rawImage: null,
+    exifData: null,
     maxTextureSize: 4096,
-    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false }
+    // Added format and quality to state parameters
+    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false, format: 'jpeg', quality: 0.95 }
 };
 
 function init() {
@@ -395,7 +413,6 @@ function createTextureFromImage(gl, img, width, height) {
 
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, gray);
     
-    // We can use NEAREST here because fs-composite handles the averaging manually
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -414,7 +431,6 @@ function initFBO(w, h) {
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, null);
     
-    // Use NEAREST for FBO so we can read exact pixels in the loop
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -452,7 +468,6 @@ function render() {
         return;
     }
 
-    // Pass 1: Noise
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
     gl.viewport(0, 0, targetW, targetH);
     gl.useProgram(state.programs.noise);
@@ -470,7 +485,6 @@ function render() {
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    // Pass 2: Composite (with Area Averaging)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.canvas.width = state.imageWidth;
     gl.canvas.height = state.imageHeight;
@@ -497,8 +511,8 @@ function render() {
 }
 
 function setupUI() {
-    const ids = ['fileInput', 'mixSlider', 'ksizeSlider', 'densitySlider', 'saveBtn', 'dropZone', 'highResToggle'];
-    const [fi, ms, ks, ds, sb, dz, hr] = ids.map(id => document.getElementById(id));
+    const ids = ['fileInput', 'mixSlider', 'ksizeSlider', 'densitySlider', 'saveBtn', 'dropZone', 'highResToggle', 'formatSelect', 'qualitySlider', 'qualityGroup'];
+    const [fi, ms, ks, ds, sb, dz, hr, fsel, qSlider, qGroup] = ids.map(id => document.getElementById(id));
 
     fi.onchange = e => handleFile(e.target.files[0]);
     dz.ondragover = e => { e.preventDefault(); dz.style.border = '2px solid var(--primary)'; };
@@ -528,10 +542,39 @@ function setupUI() {
         if(state.rawImage) processImageForTexture(state.rawImage);
     };
 
+    // Format Selector Logic
+    fsel.onchange = e => {
+        state.params.format = e.target.value;
+        qGroup.style.display = state.params.format === 'jpeg' ? 'flex' : 'none';
+        sb.innerText = `Save ${state.params.format.toUpperCase()}`;
+    };
+
+    // Quality Slider Logic
+    qSlider.oninput = e => {
+        state.params.quality = parseFloat(e.target.value);
+        document.getElementById('qualityVal').innerText = Math.round(state.params.quality * 100) + '%';
+    };
+
     sb.onclick = () => {
+        const isJpeg = state.params.format === 'jpeg';
+        const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
+        
+        // Generate payload dynamically based on format and quality
+        let dataUrl = document.getElementById('glCanvas').toDataURL(mimeType, state.params.quality);
+
+        // Only inject EXIF if we have it AND we are saving as JPEG
+        if (isJpeg && state.exifData) {
+            try {
+                const exifStr = piexif.dump(state.exifData);
+                dataUrl = piexif.insert(exifStr, dataUrl);
+            } catch (err) {
+                console.warn("Failed to insert EXIF data:", err);
+            }
+        }
+
         const link = document.createElement('a');
-        link.download = 'noise_output.png';
-        link.href = document.getElementById('glCanvas').toDataURL();
+        link.download = `noise_output.${isJpeg ? 'jpg' : 'png'}`;
+        link.href = dataUrl;
         link.click();
     };
 }
@@ -540,6 +583,17 @@ function handleFile(f) {
     if (!f || !f.type.startsWith('image/')) return;
     const r = new FileReader();
     r.onload = e => {
+        if (f.type === 'image/jpeg') {
+            try {
+                state.exifData = piexif.load(e.target.result);
+            } catch (err) {
+                state.exifData = null;
+                console.warn("Could not load EXIF data", err);
+            }
+        } else {
+            state.exifData = null; 
+        }
+
         const img = new Image();
         img.onload = () => { state.rawImage = img; processImageForTexture(img, f.name); };
         img.src = e.target.result;
