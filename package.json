@@ -1,0 +1,41 @@
+{
+  "name": "noise-generator",
+  "version": "1.0.0",
+  "description": "Area Averaging Anti-Aliased Noise Generator based on PCG3D WebGL Shaders",
+  "main": "main.js",
+  "author": "Antigravity Dev",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.noisegen",
+    "productName": "NoiseGenerator",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "libs/**/*"
+    ],
+    "mac": {
+      "target": [
+        "zip",
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    }
+  }
+}

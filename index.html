@@ -3,123 +3,336 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Noise Generator (Area Averaging)</title>
+    <title>Noise Generator - Area Averaging (PCG3D)</title>
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.min.js"></script>
+    <script src="libs/piexif.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
         :root {
-            --bg: #121212;
-            --surface: #1e1e1e;
-            --primary: #69f0ae;
-            --danger: #ff5252;
-            --text: #e0e0e0;
-            --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --bg-raw: 20, 22, 27;
+            --bg: rgb(var(--bg-raw));
+            --surface-raw: 30, 33, 40;
+            --surface: rgb(var(--surface-raw));
+            --surface-accent: #272a33;
+            --primary-grad: linear-gradient(135deg, #5c85d6 0%, #4a7ad6 100%);
+            --primary: #5c85d6;
+            --primary-accent: rgba(74, 122, 214, 0.12);
+            --danger: #e57373;
+            --text-main: #e2e4e9;
+            --text-muted: #7d8495;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --transition: all 0.2s ease-in-out;
         }
 
         body {
             background-color: var(--bg);
-            color: var(--text);
-            font-family: var(--font);
+            color: var(--text-main);
+            font-family: var(--font-sans);
             margin: 0;
+            padding: 0;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
+            overflow-x: hidden;
         }
+
+        /* Removed ambient glow for a sober appearance */
 
         header {
             width: 100%;
-            padding: 20px;
-            text-align: center;
-            background-color: var(--surface);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            margin-bottom: 20px;
+            padding: 16px 24px;
+            background-color: rgba(var(--surface-raw), 0.7);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
-        h1 { margin: 0; font-size: 1.5rem; font-weight: 300; }
-        .subtitle { font-size: 0.85rem; opacity: 0.7; margin-top: 5px; }
+        .logo-section {
+            display: flex;
+            flex-direction: column;
+        }
 
-        .container {
+        h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: var(--primary-grad);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+            font-family: var(--font-mono);
+        }
+
+        .app-layout {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 24px;
+            width: 100%;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 24px;
+            box-sizing: border-box;
+            flex-grow: 1;
+        }
+
+        @media (max-width: 1024px) {
+            .app-layout {
+                grid-template-columns: 1fr;
+                gap: 16px;
+                padding: 16px;
+            }
+        }
+
+        /* Sidebar & Panel Styles */
+        .sidebar {
             display: flex;
             flex-direction: column;
             gap: 20px;
-            width: 90%;
-            max-width: 1200px;
-            padding-bottom: 40px;
         }
 
-        .controls {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            background: var(--surface);
+        .panel {
+            background-color: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
             padding: 20px;
-            border-radius: 8px;
-            justify-content: center;
-            align-items: flex-end; /* Align to bottom for varying heights */
+            box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.15);
+            transition: var(--transition);
+        }
+
+        .panel:hover {
+            border-color: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.2);
+        }
+
+        .panel-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .control-group {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            min-width: 160px;
+            margin-bottom: 18px;
         }
 
-        label { font-size: 0.75rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary); }
-        
-        input[type="range"] { width: 100%; cursor: pointer; }
-        input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
-        
-        select {
-            padding: 8px;
-            border-radius: 4px;
-            background: rgba(255,255,255,0.1);
-            color: white;
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-main);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Sliders */
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            outline: none;
+            margin: 10px 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer;
             border: 1px solid rgba(255,255,255,0.2);
-            font-family: var(--font);
+            transition: var(--transition);
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+        }
+
+        /* Mode Selector Toggle */
+        .mode-toggle-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            position: relative;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: var(--transition);
+            z-index: 2;
+            text-align: center;
+        }
+
+        .mode-btn.active {
+            color: #fff;
+            background: var(--primary-grad);
+            box-shadow: 0 2px 6px rgba(74, 122, 214, 0.2);
+        }
+
+        /* Select inputs */
+        select {
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--surface-accent);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-family: var(--font-sans);
             cursor: pointer;
             outline: none;
+            transition: var(--transition);
         }
-        select:focus { border-color: var(--primary); }
-        select option { background: var(--surface); color: white; }
 
+        select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 8px var(--primary-accent);
+        }
+
+        /* Buttons */
         .btn {
-            background-color: var(--primary);
-            color: #000;
+            background: var(--primary-grad);
+            color: #ffffff;
             border: none;
             padding: 10px 20px;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            font-weight: bold;
-            font-size: 0.9rem;
-            transition: opacity 0.2s;
-            height: 35px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(74, 122, 214, 0.15);
         }
-        .btn:hover { opacity: 0.9; }
 
-        #fileInput { display: none; }
+        .btn:hover {
+            box-shadow: 0 4px 12px rgba(74, 122, 214, 0.25);
+            opacity: 0.95;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--primary);
+            box-shadow: 0 0 8px var(--primary-accent);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* Checkboxes */
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--surface-accent);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .checkbox-wrapper input[type="checkbox"] {
+            cursor: pointer;
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }
+
+        .checkbox-wrapper label {
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin: 0;
+            color: var(--text-main);
+        }
+
+        /* Main Canvas Viewport */
+        .viewport-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
 
         .canvas-container {
             position: relative;
-            background: #000;
-            border-radius: 4px;
+            background: #040508;
+            border-radius: 16px;
+            border: 1px dashed rgba(255, 255, 255, 0.15);
             overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 400px;
-            max-height: 80vh;
+            min-height: 480px;
+            max-height: 75vh;
+            transition: var(--transition);
+            box-shadow: inset 0 4px 20px rgba(0,0,0,0.8);
+        }
+
+        .canvas-container.dragover {
+            border-color: var(--primary);
+            box-shadow: 0 0 12px var(--primary-accent), inset 0 4px 20px rgba(0,0,0,0.8);
+            background: rgba(74, 122, 214, 0.02);
         }
 
         canvas {
             max-width: 100%;
-            max-height: 80vh;
+            max-height: 70vh;
             display: block;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
         }
 
+        /* Status & Overlay Indicators */
         #loader, #errorOverlay {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -131,99 +344,224 @@
             text-align: center;
             padding: 20px;
             box-sizing: border-box;
+            backdrop-filter: blur(8px);
         }
 
-        #loader { background: rgba(0,0,0,0.7); }
-        #errorOverlay { background: rgba(50,0,0,0.9); border: 2px solid var(--danger); }
-        .error-title { color: var(--danger); font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
-        .error-desc { color: #fff; font-size: 0.9rem; max-width: 400px; }
+        #loader {
+            background: rgba(8, 10, 15, 0.85);
+        }
+
+        #errorOverlay {
+            background: rgba(25, 10, 10, 0.92);
+            border: 2px solid var(--danger);
+            border-radius: 16px;
+        }
+
+        .error-title {
+            color: var(--danger);
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            font-family: var(--font-mono);
+        }
+
+        .error-desc {
+            color: var(--text-main);
+            font-size: 0.9rem;
+            max-width: 450px;
+            line-height: 1.4;
+        }
 
         .spinner {
-            width: 40px; height: 40px;
-            border: 4px solid var(--primary);
-            border-top-color: transparent;
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.08);
+            border-top-color: var(--primary);
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            animation: spin 0.8s cubic-bezier(0.5, 0.1, 0.4, 0.9) infinite;
         }
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        
-        .val-display { float: right; font-weight: normal; color: #fff; }
-        
-        .checkbox-wrapper {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            gap: 10px;
-            background: rgba(255,255,255,0.05);
-            padding: 8px 12px;
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        .val-display {
+            font-family: var(--font-mono);
+            font-weight: 500;
+            color: var(--primary);
+            background: rgba(74, 122, 214, 0.08);
+            padding: 2px 6px;
             border-radius: 4px;
-            height: 35px;
-            box-sizing: border-box;
+            font-size: 0.75rem;
         }
-        .checkbox-wrapper label { margin: 0; color: #fff; cursor: pointer; text-transform: none; font-size: 0.85rem;}
+
+        /* Stats & Details Grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+
+        .info-card {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .info-card-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .info-card-value {
+            color: var(--text-main);
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
 
 <header>
-    <h1>Noise Generator</h1>
-    <div class="subtitle">Area Averaging (Anti-Aliasing) | PCG3D</div>
+    <div class="logo-section">
+        <h1>NOISE GENERATOR</h1>
+        <div class="subtitle">Anti-Aliased Area Averaging | PCG3D WebGL Engine</div>
+    </div>
 </header>
 
-<div class="container">
-    <div class="controls">
-        <div class="control-group" style="align-items: flex-start;">
-            <label>Input</label>
-            <button class="btn" onclick="document.getElementById('fileInput').click()">Upload Image</button>
-            <input type="file" id="fileInput" accept="image/*">
-            <span id="fileName" style="font-size: 0.75rem; opacity: 0.7; margin-top:5px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Default</span>
+<div class="app-layout">
+    <div class="sidebar">
+        <!-- Input panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                Image Input
+            </div>
+            
+            <div class="control-group">
+                <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">
+                    Choose File...
+                </button>
+                <input type="file" id="fileInput" accept="image/*">
+            </div>
+
+            <div class="info-grid" style="grid-template-columns: 1fr; margin-top: 10px;">
+                <div class="info-card">
+                    <span class="info-card-label">Active Document</span>
+                    <span class="info-card-value" id="fileName">template_color.png</span>
+                </div>
+            </div>
         </div>
 
-        <div class="control-group">
-            <label for="mixSlider">Mix <span id="mixVal" class="val-display">0.50</span></label>
-            <input type="range" id="mixSlider" min="0" max="1" step="0.01" value="0.5">
+        <!-- Parameters panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+                Configuration
+            </div>
+
+            <div class="control-group">
+                <label>Processing Mode</label>
+                <div class="mode-toggle-container">
+                    <button type="button" class="mode-btn" id="modeGrayBtn" onclick="setMode(0)">Grayscale</button>
+                    <button type="button" class="mode-btn active" id="modeColorBtn" onclick="setMode(1)">RGB Color</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="mixSlider">Blend Mix <span id="mixVal" class="val-display">0.50</span></label>
+                <input type="range" id="mixSlider" min="0" max="1" step="0.01" value="0.50">
+            </div>
+
+            <div class="control-group">
+                <label for="ksizeSlider">Patch Size <span id="ksizeVal" class="val-display">5</span></label>
+                <div style="font-size: 0.65rem; color: var(--text-muted); line-height: 1.3; margin-top: -2px; margin-bottom: 2px;">Note: Higher values demand significantly more GPU memory.</div>
+                <input type="range" id="ksizeSlider" min="2" max="12" step="1" value="5">
+            </div>
+
+            <div class="control-group">
+                <label for="densitySlider">Point Density <span id="densityVal" class="val-display">12.0</span></label>
+                <input type="range" id="densitySlider" min="1" max="25" step="0.5" value="12.0">
+            </div>
+
+            <div class="control-group">
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="highResToggle">
+                    <label for="highResToggle" title="Allow loading full scale images up to GPU Max Texture Limit.">Force Maximum Resolution</label>
+                </div>
+            </div>
         </div>
 
-        <div class="control-group">
-            <label for="ksizeSlider">Patch Size <span id="ksizeVal" class="val-display">5</span></label>
-            <input type="range" id="ksizeSlider" min="2" max="12" step="1" value="5">
-        </div>
+        <!-- Export panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1-2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Export Settings
+            </div>
 
-        <div class="control-group">
-            <label for="densitySlider">Density <span id="densityVal" class="val-display">12.0</span></label>
-            <input type="range" id="densitySlider" min="1" max="25" step="0.5" value="12.0">
-        </div>
+            <div class="control-group" style="grid-template-columns: 1fr;">
+                <label for="formatSelect">File Format</label>
+                <select id="formatSelect">
+                    <option value="jpeg">JPEG (Preserves Exif)</option>
+                    <option value="png">PNG (Lossless Quality)</option>
+                </select>
+            </div>
 
-        <div class="checkbox-wrapper">
-            <input type="checkbox" id="highResToggle">
-            <label for="highResToggle" title="Allow loading large images.">Force Full Res</label>
-        </div>
-        
-        <div class="control-group" style="min-width: 100px;">
-            <label for="formatSelect">Format</label>
-            <select id="formatSelect">
-                <option value="jpeg">JPG</option>
-                <option value="png">PNG</option>
-            </select>
-        </div>
+            <div class="control-group" id="qualityGroup">
+                <label for="qualitySlider">Export Quality <span id="qualityVal" class="val-display">95%</span></label>
+                <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.01" value="0.95">
+            </div>
 
-        <div class="control-group" id="qualityGroup">
-            <label for="qualitySlider">Quality <span id="qualityVal" class="val-display">95%</span></label>
-            <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.01" value="0.95">
-        </div>
-
-        <div class="control-group">
-            <button class="btn" id="saveBtn">Save JPG</button>
+            <div class="control-group">
+                <button class="btn" id="saveBtn" style="width: 100%;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                    Download Output
+                </button>
+            </div>
         </div>
     </div>
 
-    <div class="canvas-container" id="dropZone">
-        <div id="loader"><div class="spinner"></div><div style="margin-top:10px">Processing...</div></div>
-        <div id="errorOverlay">
-            <div class="error-title">GPU Limit Exceeded</div>
-            <div class="error-desc" id="errorText">Image too large for this Patch Size.</div>
+    <div class="viewport-container">
+        <div class="canvas-container" id="dropZone">
+            <div id="loader">
+                <div class="spinner"></div>
+                <div style="margin-top:16px; font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.05em; color: var(--text-main);">PROCESSING SHADERS...</div>
+            </div>
+            <div id="errorOverlay">
+                <div class="error-title">GPU MEMORY BOUND EXCEEDED</div>
+                <div class="error-desc" id="errorText">Image layout constraints exceed WebGL texture capacity. Resize or reduce patch configuration.</div>
+            </div>
+            <canvas id="glCanvas"></canvas>
         </div>
-        <canvas id="glCanvas"></canvas>
+
+        <div class="info-grid">
+            <div class="info-card">
+                <span class="info-card-label">Hardware Profile</span>
+                <span class="info-card-value" id="gpuInfo">Checking GL context...</span>
+            </div>
+            <div class="info-card">
+                <span class="info-card-label">Original Dim</span>
+                <span class="info-card-value" id="origDim">0 x 0</span>
+            </div>
+            <div class="info-card">
+                <span class="info-card-label">Processing Dim</span>
+                <span class="info-card-value" id="procDim">0 x 0</span>
+            </div>
+            <div class="info-card">
+                <span class="info-card-label">Subpixel Matrix</span>
+                <span class="info-card-value" id="subDim">0 x 0</span>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -246,9 +584,10 @@
     uniform vec2 u_resolution; 
     uniform float u_ksize;     
     uniform float u_density;   
+    uniform int u_colorMode; // 0 = Grayscale, 1 = Color
     
     in vec2 v_uv;
-    out float outColor; 
+    out vec4 outColor; 
 
     // PCG3D Hash
     uvec3 pcg3d(uvec3 v) {
@@ -270,38 +609,73 @@
         uvec2 block_id = uvec2(block_index_f);
 
         vec2 sample_uv = (block_index_f + 0.5) / u_resolution;
-        float pixel_value = texture(u_image, sample_uv).r; 
+        vec3 pixel_val = texture(u_image, sample_uv).rgb; 
         
-        float val_safe = min(pixel_value, 1.000);
-        float n_circles_f = -u_density * log(1.001 - val_safe);
-        
-        vec3 rnd_count = pcg3d_f(uvec3(block_id, 0u)); 
-        float u1 = max(rnd_count.x, 0.000001);
-        float u2 = rnd_count.y;
-        float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
-        
-        int n_circles = int(n_circles_f + normal * 2.0);
-        
-        float accum = 0.0;
+        vec3 accum = vec3(0.0);
         vec2 local_pos = mod(raw_pos, u_ksize); 
         float r = u_ksize * 8.4 / 40.0;
         float r_sq = r * r;
         float rand_move = floor(u_ksize / 2.0) + r;
         float center_base = (u_ksize - 1.0) / 2.0;
 
-        if (n_circles > 0) {
-            for (int i = 0; i < 200; i++) {
-                if (i >= n_circles) break;
-                vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u));
-                float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
-                float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
-                float dx = local_pos.x - targ_x;
-                float dy = local_pos.y - targ_y;
-                if (dx*dx + dy*dy < r_sq) accum += 1.0;
+        if (u_colorMode == 0) {
+            // Grayscale: calculate single channel noise
+            float val_gray = (pixel_val.r + pixel_val.g + pixel_val.b) / 3.0;
+            float val_safe = min(val_gray, 1.000);
+            float n_circles_f = -u_density * log(1.001 - val_safe);
+            
+            vec3 rnd_count = pcg3d_f(uvec3(block_id, 0u)); 
+            float u1 = max(rnd_count.x, 0.000001);
+            float u2 = rnd_count.y;
+            float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
+            
+            int n_circles = int(n_circles_f + normal * 2.0);
+            float gray_accum = 0.0;
+            if (n_circles > 0) {
+                for (int i = 0; i < 200; i++) {
+                    if (i >= n_circles) break;
+                    vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u));
+                    float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
+                    float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
+                    float dx = local_pos.x - targ_x;
+                    float dy = local_pos.y - targ_y;
+                    if (dx*dx + dy*dy < r_sq) gray_accum += 1.0;
+                }
+            }
+            accum = vec3(min(gray_accum, 1.0));
+        } else {
+            // RGB Color: independent channels
+            vec3 val_safe = min(pixel_val, vec3(1.000));
+            vec3 n_circles_f = -u_density * log(vec3(1.001) - val_safe);
+
+            for (uint c = 0u; c < 3u; c++) {
+                vec3 rnd_count = pcg3d_f(uvec3(block_id, c)); 
+                float u1 = max(rnd_count.x, 0.000001);
+                float u2 = rnd_count.y;
+                float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
+                
+                int n_circles = int(n_circles_f[int(c)] + normal * 2.0);
+                
+                if (n_circles > 0) {
+                    for (int i = 0; i < 200; i++) {
+                        if (i >= n_circles) break;
+                        vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u + c * 5000u));
+                        float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
+                        float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
+                        float dx = local_pos.x - targ_x;
+                        float dy = local_pos.y - targ_y;
+                        
+                        if (dx*dx + dy*dy < r_sq) {
+                            if (c == 0u) accum.r += 1.0;
+                            else if (c == 1u) accum.g += 1.0;
+                            else accum.b += 1.0;
+                        }
+                    }
+                }
             }
         }
         
-        outColor = min(accum, 1.0);
+        outColor = vec4(min(accum, vec3(1.0)), 1.0);
     }
 </script>
 
@@ -312,6 +686,7 @@
     uniform sampler2D u_original;
     uniform sampler2D u_noise;
     uniform float u_mix;
+    uniform int u_colorMode; // 0 = Grayscale, 1 = Color
     
     uniform vec2 u_resolution;
     uniform float u_ksize;
@@ -320,25 +695,29 @@
     out vec4 outColor;
     
     void main() {
-        float orig = texture(u_original, v_uv).r;
+        vec3 orig = texture(u_original, v_uv).rgb;
+        if (u_colorMode == 0) {
+            float gray = (orig.r + orig.g + orig.b) / 3.0;
+            orig = vec3(gray);
+        }
         
         vec2 block_start_uv = floor(v_uv * u_resolution) / u_resolution;
         vec2 noise_texel_size = 1.0 / (u_resolution * u_ksize);
         
-        float noise_accum = 0.0;
+        vec3 noise_accum = vec3(0.0);
         float total_samples = u_ksize * u_ksize;
         
         for(float x = 0.0; x < u_ksize; x += 1.0) {
             for(float y = 0.0; y < u_ksize; y += 1.0) {
                 vec2 offset = vec2(x + 0.5, y + 0.5) * noise_texel_size;
-                noise_accum += texture(u_noise, block_start_uv + offset).r;
+                noise_accum += texture(u_noise, block_start_uv + offset).rgb;
             }
         }
         
-        float noise_avg = noise_accum / total_samples;
+        vec3 noise_avg = noise_accum / total_samples;
         
-        float mixed = u_mix * noise_avg + (1.0 - u_mix) * orig;
-        outColor = vec4(vec3(mixed), 1.0);
+        vec3 mixed = mix(orig, noise_avg, u_mix);
+        outColor = vec4(mixed, 1.0);
     }
 </script>
 
@@ -355,19 +734,27 @@ const state = {
     rawImage: null,
     exifData: null,
     maxTextureSize: 4096,
-    // Added format and quality to state parameters
-    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false, format: 'jpeg', quality: 0.95 }
+    params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false, format: 'jpeg', quality: 0.95, colorMode: 1 }
 };
 
 function init() {
     const canvas = document.getElementById('glCanvas');
     const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
     
-    if (!gl) { alert("WebGL 2.0 not supported."); return; }
+    if (!gl) { alert("WebGL 2.0 not supported by this runtime."); return; }
     state.gl = gl;
     state.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     
     gl.getExtension('EXT_color_buffer_float');
+
+    // Get GPU Info
+    const dbgRenderInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (dbgRenderInfo) {
+        const renderer = gl.getParameter(dbgRenderInfo.UNMASKED_RENDERER_WEBGL);
+        document.getElementById('gpuInfo').innerText = renderer.split('/')[0].replace("ANGLE (", "").replace("Direct3D11 vs_", "").replace(")", "").trim();
+    } else {
+        document.getElementById('gpuInfo').innerText = "Standard WebGL2 Device";
+    }
 
     state.programs.noise = createProgram(gl, 'vs-quad', 'fs-noise');
     state.programs.composite = createProgram(gl, 'vs-quad', 'fs-composite');
@@ -407,11 +794,8 @@ function createTextureFromImage(gl, img, width, height) {
     c.width = width; c.height = height;
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0, width, height);
-    const raw = ctx.getImageData(0,0,width,height).data;
-    const gray = new Uint8Array(width * height);
-    for(let i=0; i<width*height; i++) gray[i] = (raw[i*4] + raw[i*4+1] + raw[i*4+2]) / 3;
 
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, gray);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
     
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -429,7 +813,7 @@ function initFBO(w, h) {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -449,22 +833,26 @@ function initFBO(w, h) {
 function render() {
     if (!state.textures.original) return;
     const gl = state.gl;
-    const { ksize, density, mix } = state.params;
+    const { ksize, density, mix, colorMode } = state.params;
     
     const targetW = state.imageWidth * ksize;
     const targetH = state.imageHeight * ksize;
     const errorOverlay = document.getElementById('errorOverlay');
 
+    document.getElementById('origDim').innerText = `${state.imageWidth} x ${state.imageHeight}`;
+    document.getElementById('procDim').innerText = `${state.imageWidth} x ${state.imageHeight}`;
+    document.getElementById('subDim').innerText = `${targetW} x ${targetH}`;
+
     if (targetW > state.maxTextureSize || targetH > state.maxTextureSize) {
         errorOverlay.style.display = 'flex';
-        document.getElementById('errorText').innerHTML = `Size (${targetW}x${targetH}) > GPU Max (${state.maxTextureSize})`;
+        document.getElementById('errorText').innerHTML = `Resolution boundary limit exceeded.<br/>Subpixel map matrix calculated at (${targetW}x${targetH}) which is larger than the GPU hardware max width limit (${state.maxTextureSize}).<br/><br/>Decrease <strong>Patch Size</strong> or import a smaller image.`;
         return; 
     }
     errorOverlay.style.display = 'none';
 
     if (!initFBO(targetW, targetH)) {
         errorOverlay.style.display = 'flex';
-        document.getElementById('errorText').innerText = "Memory Allocation Failed.";
+        document.getElementById('errorText').innerText = "Shader pipeline framebuffer initialization failed.";
         return;
     }
 
@@ -482,6 +870,7 @@ function render() {
     gl.uniform2f(gl.getUniformLocation(state.programs.noise, "u_resolution"), state.imageWidth, state.imageHeight);
     gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_ksize"), ksize);
     gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_density"), density);
+    gl.uniform1i(gl.getUniformLocation(state.programs.noise, "u_colorMode"), colorMode);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -506,8 +895,25 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_mix"), mix);
     gl.uniform2f(gl.getUniformLocation(state.programs.composite, "u_resolution"), state.imageWidth, state.imageHeight);
     gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_ksize"), ksize);
+    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_colorMode"), colorMode);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function setMode(mode) {
+    state.params.colorMode = mode;
+    const grayBtn = document.getElementById('modeGrayBtn');
+    const colorBtn = document.getElementById('modeColorBtn');
+    
+    if (mode === 0) {
+        grayBtn.classList.add('active');
+        colorBtn.classList.remove('active');
+    } else {
+        colorBtn.classList.add('active');
+        grayBtn.classList.remove('active');
+    }
+    
+    debounceRender();
 }
 
 function setupUI() {
@@ -515,9 +921,10 @@ function setupUI() {
     const [fi, ms, ks, ds, sb, dz, hr, fsel, qSlider, qGroup] = ids.map(id => document.getElementById(id));
 
     fi.onchange = e => handleFile(e.target.files[0]);
-    dz.ondragover = e => { e.preventDefault(); dz.style.border = '2px solid var(--primary)'; };
-    dz.ondragleave = e => { e.preventDefault(); dz.style.border = 'none'; };
-    dz.ondrop = e => { e.preventDefault(); dz.style.border = 'none'; handleFile(e.dataTransfer.files[0]); };
+    
+    dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover'); };
+    dz.ondragleave = e => { e.preventDefault(); dz.classList.remove('dragover'); };
+    dz.ondrop = e => { e.preventDefault(); dz.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); };
 
     ms.oninput = e => { 
         state.params.mix = +e.target.value; 
@@ -546,7 +953,6 @@ function setupUI() {
     fsel.onchange = e => {
         state.params.format = e.target.value;
         qGroup.style.display = state.params.format === 'jpeg' ? 'flex' : 'none';
-        sb.innerText = `Save ${state.params.format.toUpperCase()}`;
     };
 
     // Quality Slider Logic
@@ -559,21 +965,20 @@ function setupUI() {
         const isJpeg = state.params.format === 'jpeg';
         const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
         
-        // Generate payload dynamically based on format and quality
         let dataUrl = document.getElementById('glCanvas').toDataURL(mimeType, state.params.quality);
 
-        // Only inject EXIF if we have it AND we are saving as JPEG
         if (isJpeg && state.exifData) {
             try {
                 const exifStr = piexif.dump(state.exifData);
                 dataUrl = piexif.insert(exifStr, dataUrl);
             } catch (err) {
-                console.warn("Failed to insert EXIF data:", err);
+                console.warn("EXIF integration failed:", err);
             }
         }
 
         const link = document.createElement('a');
-        link.download = `noise_output.${isJpeg ? 'jpg' : 'png'}`;
+        const activeName = document.getElementById('fileName').innerText.replace(/\.[^/.]+$/, "");
+        link.download = `${activeName}_noise_output.${isJpeg ? 'jpg' : 'png'}`;
         link.href = dataUrl;
         link.click();
     };
@@ -581,6 +986,9 @@ function setupUI() {
 
 function handleFile(f) {
     if (!f || !f.type.startsWith('image/')) return;
+    
+    document.getElementById('loader').style.display = 'flex';
+    
     const r = new FileReader();
     r.onload = e => {
         if (f.type === 'image/jpeg') {
@@ -588,14 +996,17 @@ function handleFile(f) {
                 state.exifData = piexif.load(e.target.result);
             } catch (err) {
                 state.exifData = null;
-                console.warn("Could not load EXIF data", err);
+                console.warn("No valid EXIF header segments found", err);
             }
         } else {
             state.exifData = null; 
         }
 
         const img = new Image();
-        img.onload = () => { state.rawImage = img; processImageForTexture(img, f.name); };
+        img.onload = () => { 
+            state.rawImage = img; 
+            processImageForTexture(img, f.name); 
+        };
         img.src = e.target.result;
     };
     r.readAsDataURL(f);
@@ -623,18 +1034,30 @@ function createPlaceholderImage() {
     const s = 512, c = document.createElement('canvas');
     c.width = s; c.height = s;
     const ctx = c.getContext('2d');
+    
     const g = ctx.createLinearGradient(0,0,s,s);
-    g.addColorStop(0,"#000"); g.addColorStop(1,"#fff");
-    ctx.fillStyle = g; ctx.fillRect(0,0,s,s);
-    ctx.fillStyle = "#80808080"; ctx.beginPath(); ctx.arc(s/2,s/2,s/3,0,Math.PI*2); ctx.fill();
-    state.rawImage = c; processImageForTexture(c, "Default");
+    g.addColorStop(0,"#ff0055"); 
+    g.addColorStop(0.5,"#00ffaa"); 
+    g.addColorStop(1,"#5500ff");
+    ctx.fillStyle = g; 
+    ctx.fillRect(0,0,s,s);
+    ctx.fillStyle = "#ffffffaa"; 
+    ctx.beginPath(); 
+    ctx.arc(s/2,s/2,s/3,0,Math.PI*2); 
+    ctx.fill();
+    
+    state.rawImage = c; 
+    processImageForTexture(c, "template_color.png");
 }
 
 let tid;
 function debounceRender() {
     document.getElementById('loader').style.display = 'flex';
     clearTimeout(tid);
-    tid = setTimeout(() => requestAnimationFrame(() => { render(); document.getElementById('loader').style.display = 'none'; }), 50);
+    tid = setTimeout(() => requestAnimationFrame(() => { 
+        render(); 
+        document.getElementById('loader').style.display = 'none'; 
+    }), 60);
 }
 
 window.onload = init;
