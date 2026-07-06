@@ -16,6 +16,9 @@
   "build": {
     "appId": "com.noisegen",
     "productName": "NoiseGenerator",
+    "publish": {
+      "provider": "github"
+    },
     "directories": {
       "output": "dist"
     },
