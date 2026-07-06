@@ -37,7 +37,7 @@ jobs:
         run: npm install
 
       - name: Compile and Package Application
-        run: npm run dist
+        run: npm run dist -- --publish never
 
       - name: Upload Packaged Binaries
         uses: actions/upload-artifact@v4
