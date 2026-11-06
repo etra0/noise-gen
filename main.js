@@ -7,14 +7,26 @@ function createWindow() {
         height: 880,
         minWidth: 1000,
         minHeight: 700,
+        show: false,
         title: "Noise Generator",
-        backgroundColor: "#080a0f",
+        backgroundColor: "#14161b",
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: true
+            sandbox: true,
+            spellcheck: false
         }
     });
+
+    win.once('ready-to-show', () => {
+        win.show();
+    });
+
+    // Prevent accidental file drops outside the viewport from navigating away from the app
+    win.webContents.on('will-navigate', (event) => {
+        event.preventDefault();
+    });
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
     win.loadFile(path.join(__dirname, 'index.html'));
 

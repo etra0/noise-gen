@@ -7,10 +7,6 @@
     
     <script src="libs/piexif.js"></script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-
     <style>
         :root {
             --bg-raw: 20, 22, 27;
@@ -25,7 +21,7 @@
             --text-main: #e2e4e9;
             --text-muted: #7d8495;
             --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             --transition: all 0.2s ease-in-out;
         }
 
@@ -567,26 +563,25 @@
 
 <script type="x-shader/x-vertex" id="vs-quad">
     #version 300 es
-    in vec4 a_position;
+    layout(location = 0) in vec2 a_position;
     out vec2 v_uv;
     void main() {
-        v_uv = a_position.xy * 0.5 + 0.5;
+        v_uv = a_position * 0.5 + 0.5;
         v_uv.y = 1.0 - v_uv.y;
-        gl_Position = a_position;
+        gl_Position = vec4(a_position, 0.0, 1.0);
     }
 </script>
 
 <script type="x-shader/x-fragment" id="fs-noise">
     #version 300 es
     precision highp float;
+    precision highp int;
     
     uniform sampler2D u_image;
-    uniform vec2 u_resolution; 
     uniform float u_ksize;     
     uniform float u_density;   
     uniform int u_colorMode; // 0 = Grayscale, 1 = Color
     
-    in vec2 v_uv;
     out vec4 outColor; 
 
     // PCG3D Hash
@@ -598,84 +593,126 @@
         return v;
     }
 
-    vec3 pcg3d_f(uvec3 v) {
+    vec2 pcg3d_f2(uvec3 v) {
         uvec3 r = pcg3d(v);
-        return vec3(r) * (1.0 / float(0xffffffffu));
+        return vec2(r.xy) * (1.0 / float(0xffffffffu));
+    }
+
+    uint wordMask(int bits) {
+        if (bits <= 0) return 0u;
+        if (bits >= 32) return 0xffffffffu;
+        return (1u << uint(bits)) - 1u;
+    }
+
+    uint popcount160(uvec4 m0, uint m1) {
+        m0 = m0 - ((m0 >> 1u) & 0x55555555u);
+        m0 = (m0 & 0x33333333u) + ((m0 >> 2u) & 0x33333333u);
+        uvec4 c4 = (((m0 + (m0 >> 4u)) & 0x0f0f0f0fu) * 0x01010101u) >> 24u;
+        m1 = m1 - ((m1 >> 1u) & 0x55555555u);
+        m1 = (m1 & 0x33333333u) + ((m1 >> 2u) & 0x33333333u);
+        uint c1 = (((m1 + (m1 >> 4u)) & 0x0f0f0f0fu) * 0x01010101u) >> 24u;
+        return c4.x + c4.y + c4.z + c4.w + c1;
+    }
+
+    uint evalChannel(
+        uvec2 block_id,
+        uint c,
+        float ch_val,
+        int k,
+        uvec4 full_m0,
+        uint full_m1,
+        float r,
+        float r_sq,
+        float rand_move,
+        float center_base
+    ) {
+        float val_safe = min(ch_val, 1.000);
+        float n_circles_f = -u_density * log(1.001 - val_safe);
+
+        vec2 rnd_count = pcg3d_f2(uvec3(block_id, c));
+        float u1 = max(rnd_count.x, 0.000001);
+        float u2 = rnd_count.y;
+        float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
+
+        int n_circles = int(n_circles_f + normal * 2.0);
+        if (n_circles <= 0) return 0u;
+
+        uvec4 m0 = uvec4(0u);
+        uint m1 = 0u;
+        uint seed_base = 1000u + c * 5000u;
+
+        for (int i = 0; i < 200; i++) {
+            if (i >= n_circles) break;
+
+            vec2 rnd_pos = pcg3d_f2(uvec3(block_id, uint(i) + seed_base));
+            float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
+            float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
+
+            int x0 = max(0, int(floor(targ_x - r - 0.5)));
+            int x1 = min(k - 1, int(ceil(targ_x + r - 0.5)));
+            int y0 = max(0, int(floor(targ_y - r - 0.5)));
+            int y1 = min(k - 1, int(ceil(targ_y + r - 0.5)));
+
+            for (int y = y0; y <= y1; y++) {
+                float dy = (float(y) + 0.5) - targ_y;
+                float dy_sq = dy * dy;
+                if (dy_sq >= r_sq) continue;
+                int row_offset = y * k;
+                for (int x = x0; x <= x1; x++) {
+                    float dx = (float(x) + 0.5) - targ_x;
+                    if (dx * dx + dy_sq < r_sq) {
+                        uint u_idx = uint(row_offset + x);
+                        uint word = u_idx >> 5u;
+                        uint bit = 1u << (u_idx & 31u);
+                        if (word == 0u) m0.x |= bit;
+                        else if (word == 1u) m0.y |= bit;
+                        else if (word == 2u) m0.z |= bit;
+                        else if (word == 3u) m0.w |= bit;
+                        else m1 |= bit;
+                    }
+                }
+            }
+
+            if (all(equal(m0, full_m0)) && m1 == full_m1) break;
+        }
+
+        return popcount160(m0, m1);
     }
 
     void main() {
-        vec2 raw_pos = gl_FragCoord.xy;
-        vec2 block_index_f = floor(raw_pos / u_ksize);
-        uvec2 block_id = uvec2(block_index_f);
+        ivec2 ipos = ivec2(gl_FragCoord.xy);
+        uvec2 block_id = uvec2(ipos);
+        vec3 pixel_val = texelFetch(u_image, ipos, 0).rgb;
 
-        vec2 sample_uv = (block_index_f + 0.5) / u_resolution;
-        vec3 pixel_val = texture(u_image, sample_uv).rgb; 
-        
-        vec3 accum = vec3(0.0);
-        vec2 local_pos = mod(raw_pos, u_ksize); 
+        int k = int(u_ksize + 0.5);
+        int total_bits = k * k;
+        uvec4 full_m0 = uvec4(
+            wordMask(total_bits),
+            wordMask(total_bits - 32),
+            wordMask(total_bits - 64),
+            wordMask(total_bits - 96)
+        );
+        uint full_m1 = wordMask(total_bits - 128);
+
         float r = u_ksize * 8.4 / 40.0;
         float r_sq = r * r;
         float rand_move = floor(u_ksize / 2.0) + r;
         float center_base = (u_ksize - 1.0) / 2.0;
 
+        uvec3 counts;
         if (u_colorMode == 0) {
-            // Grayscale: calculate single channel noise
             float val_gray = (pixel_val.r + pixel_val.g + pixel_val.b) / 3.0;
-            float val_safe = min(val_gray, 1.000);
-            float n_circles_f = -u_density * log(1.001 - val_safe);
-            
-            vec3 rnd_count = pcg3d_f(uvec3(block_id, 0u)); 
-            float u1 = max(rnd_count.x, 0.000001);
-            float u2 = rnd_count.y;
-            float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
-            
-            int n_circles = int(n_circles_f + normal * 2.0);
-            float gray_accum = 0.0;
-            if (n_circles > 0) {
-                for (int i = 0; i < 200; i++) {
-                    if (i >= n_circles) break;
-                    vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u));
-                    float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
-                    float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
-                    float dx = local_pos.x - targ_x;
-                    float dy = local_pos.y - targ_y;
-                    if (dx*dx + dy*dy < r_sq) gray_accum += 1.0;
-                }
-            }
-            accum = vec3(min(gray_accum, 1.0));
+            uint cnt = evalChannel(block_id, 0u, val_gray, k, full_m0, full_m1, r, r_sq, rand_move, center_base);
+            counts = uvec3(cnt);
         } else {
-            // RGB Color: independent channels
-            vec3 val_safe = min(pixel_val, vec3(1.000));
-            vec3 n_circles_f = -u_density * log(vec3(1.001) - val_safe);
-
-            for (uint c = 0u; c < 3u; c++) {
-                vec3 rnd_count = pcg3d_f(uvec3(block_id, c)); 
-                float u1 = max(rnd_count.x, 0.000001);
-                float u2 = rnd_count.y;
-                float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265 * u2);
-                
-                int n_circles = int(n_circles_f[int(c)] + normal * 2.0);
-                
-                if (n_circles > 0) {
-                    for (int i = 0; i < 200; i++) {
-                        if (i >= n_circles) break;
-                        vec3 rnd_pos = pcg3d_f(uvec3(block_id, uint(i) + 1000u + c * 5000u));
-                        float targ_x = center_base + (0.5 - rnd_pos.x) * 2.0 * rand_move;
-                        float targ_y = center_base + (0.5 - rnd_pos.y) * 2.0 * rand_move;
-                        float dx = local_pos.x - targ_x;
-                        float dy = local_pos.y - targ_y;
-                        
-                        if (dx*dx + dy*dy < r_sq) {
-                            if (c == 0u) accum.r += 1.0;
-                            else if (c == 1u) accum.g += 1.0;
-                            else accum.b += 1.0;
-                        }
-                    }
-                }
-            }
+            counts = uvec3(
+                evalChannel(block_id, 0u, pixel_val.r, k, full_m0, full_m1, r, r_sq, rand_move, center_base),
+                evalChannel(block_id, 1u, pixel_val.g, k, full_m0, full_m1, r, r_sq, rand_move, center_base),
+                evalChannel(block_id, 2u, pixel_val.b, k, full_m0, full_m1, r, r_sq, rand_move, center_base)
+            );
         }
-        
-        outColor = vec4(min(accum, vec3(1.0)), 1.0);
+
+        outColor = vec4(vec3(counts) / 255.0, 1.0);
     }
 </script>
 
@@ -687,9 +724,7 @@
     uniform sampler2D u_noise;
     uniform float u_mix;
     uniform int u_colorMode; // 0 = Grayscale, 1 = Color
-    
-    uniform vec2 u_resolution;
-    uniform float u_ksize;
+    uniform float u_totalSamples;
 
     in vec2 v_uv;
     out vec4 outColor;
@@ -701,20 +736,8 @@
             orig = vec3(gray);
         }
         
-        vec2 block_start_uv = floor(v_uv * u_resolution) / u_resolution;
-        vec2 noise_texel_size = 1.0 / (u_resolution * u_ksize);
-        
-        vec3 noise_accum = vec3(0.0);
-        float total_samples = u_ksize * u_ksize;
-        
-        for(float x = 0.0; x < u_ksize; x += 1.0) {
-            for(float y = 0.0; y < u_ksize; y += 1.0) {
-                vec2 offset = vec2(x + 0.5, y + 0.5) * noise_texel_size;
-                noise_accum += texture(u_noise, block_start_uv + offset).rgb;
-            }
-        }
-        
-        vec3 noise_avg = noise_accum / total_samples;
+        vec3 noise_accum = floor(texture(u_noise, v_uv).rgb * 255.0 + 0.5);
+        vec3 noise_avg = noise_accum / u_totalSamples;
         
         vec3 mixed = mix(orig, noise_avg, u_mix);
         outColor = vec4(mixed, 1.0);
@@ -725,27 +748,44 @@
 const state = {
     gl: null,
     programs: {},
-    textures: { original: null, noiseComp: null },
+    uniforms: { noise: {}, composite: {} },
+    vao: null,
     buffers: { quad: null },
+    textures: { original: null, noiseComp: null },
     fbo: null,
-    imageAspect: 1,
+    fboWidth: 0,
+    fboHeight: 0,
+    origWidth: 0,
+    origHeight: 0,
     imageWidth: 0,
     imageHeight: 0,
     rawImage: null,
+    rawIsOpaque: false,
+    objectUrl: null,
     exifData: null,
+    scratchCanvas: null,
     maxTextureSize: 4096,
+    noiseDirty: true,
+    dimsDirty: true,
+    rafPending: false,
+    loadId: 0,
     params: { mix: 0.5, ksize: 5, density: 12.0, highRes: false, format: 'jpeg', quality: 0.95, colorMode: 1 }
 };
 
 function init() {
     const canvas = document.getElementById('glCanvas');
-    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+    const gl = canvas.getContext('webgl2', {
+        preserveDrawingBuffer: true,
+        antialias: false,
+        depth: false,
+        stencil: false,
+        alpha: false,
+        powerPreference: 'high-performance'
+    });
     
     if (!gl) { alert("WebGL 2.0 not supported by this runtime."); return; }
     state.gl = gl;
     state.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    
-    gl.getExtension('EXT_color_buffer_float');
 
     // Get GPU Info
     const dbgRenderInfo = gl.getExtension('WEBGL_debug_renderer_info');
@@ -758,10 +798,36 @@ function init() {
 
     state.programs.noise = createProgram(gl, 'vs-quad', 'fs-noise');
     state.programs.composite = createProgram(gl, 'vs-quad', 'fs-composite');
-    
+
+    state.uniforms.noise = {
+        u_image: gl.getUniformLocation(state.programs.noise, "u_image"),
+        u_ksize: gl.getUniformLocation(state.programs.noise, "u_ksize"),
+        u_density: gl.getUniformLocation(state.programs.noise, "u_density"),
+        u_colorMode: gl.getUniformLocation(state.programs.noise, "u_colorMode")
+    };
+    state.uniforms.composite = {
+        u_original: gl.getUniformLocation(state.programs.composite, "u_original"),
+        u_noise: gl.getUniformLocation(state.programs.composite, "u_noise"),
+        u_mix: gl.getUniformLocation(state.programs.composite, "u_mix"),
+        u_colorMode: gl.getUniformLocation(state.programs.composite, "u_colorMode"),
+        u_totalSamples: gl.getUniformLocation(state.programs.composite, "u_totalSamples")
+    };
+
+    // Bind static texture unit assignments once per program
+    gl.useProgram(state.programs.noise);
+    gl.uniform1i(state.uniforms.noise.u_image, 0);
+    gl.useProgram(state.programs.composite);
+    gl.uniform1i(state.uniforms.composite.u_original, 0);
+    gl.uniform1i(state.uniforms.composite.u_noise, 1);
+
+    // Single oversized fullscreen triangle in a VAO (avoids quad diagonal overdraw)
+    state.vao = gl.createVertexArray();
+    gl.bindVertexArray(state.vao);
     state.buffers.quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     createPlaceholderImage();
     setupUI();
@@ -782,21 +848,33 @@ function createProgram(gl, vsId, fsId) {
     gl.attachShader(p, vs);
     gl.attachShader(p, fs);
     gl.linkProgram(p);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
     return p;
 }
 
-function createTextureFromImage(gl, img, width, height) {
+function createTextureFromImage(gl, img, width, height, isOpaque) {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    
-    const c = document.createElement('canvas');
-    c.width = width; c.height = height;
-    const ctx = c.getContext('2d');
-    ctx.drawImage(img, 0, 0, width, height);
 
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
-    
+    const srcW = img.naturalWidth || img.width;
+    const srcH = img.naturalHeight || img.height;
+
+    if (width === srcW && height === srcH && (img instanceof HTMLCanvasElement || isOpaque)) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    } else {
+        if (!state.scratchCanvas) state.scratchCanvas = document.createElement('canvas');
+        const c = state.scratchCanvas;
+        c.width = width;
+        c.height = height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
+        c.width = 0;
+        c.height = 0;
+    }
+
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -805,7 +883,9 @@ function createTextureFromImage(gl, img, width, height) {
     return tex;
 }
 
-function initFBO(w, h) {
+function ensureFBO(w, h) {
+    if (state.fbo && state.fboWidth === w && state.fboHeight === h) return true;
+
     const gl = state.gl;
     if (state.fbo) gl.deleteFramebuffer(state.fbo);
     if (state.textures.noiseComp) gl.deleteTexture(state.textures.noiseComp);
@@ -825,7 +905,13 @@ function initFBO(w, h) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
     
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return false;
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        state.fboWidth = 0;
+        state.fboHeight = 0;
+        return false;
+    }
+    state.fboWidth = w;
+    state.fboHeight = h;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return true;
 }
@@ -834,73 +920,79 @@ function render() {
     if (!state.textures.original) return;
     const gl = state.gl;
     const { ksize, density, mix, colorMode } = state.params;
-    
-    const targetW = state.imageWidth * ksize;
-    const targetH = state.imageHeight * ksize;
+    const w = state.imageWidth;
+    const h = state.imageHeight;
     const errorOverlay = document.getElementById('errorOverlay');
 
-    document.getElementById('origDim').innerText = `${state.imageWidth} x ${state.imageHeight}`;
-    document.getElementById('procDim').innerText = `${state.imageWidth} x ${state.imageHeight}`;
-    document.getElementById('subDim').innerText = `${targetW} x ${targetH}`;
+    if (state.dimsDirty) {
+        document.getElementById('origDim').innerText = `${state.origWidth} x ${state.origHeight}`;
+        document.getElementById('procDim').innerText = `${w} x ${h}`;
+        document.getElementById('subDim').innerText = `${w * ksize} x ${h * ksize}`;
+        state.dimsDirty = false;
+    }
 
-    if (targetW > state.maxTextureSize || targetH > state.maxTextureSize) {
+    if (w > state.maxTextureSize || h > state.maxTextureSize) {
         errorOverlay.style.display = 'flex';
-        document.getElementById('errorText').innerHTML = `Resolution boundary limit exceeded.<br/>Subpixel map matrix calculated at (${targetW}x${targetH}) which is larger than the GPU hardware max width limit (${state.maxTextureSize}).<br/><br/>Decrease <strong>Patch Size</strong> or import a smaller image.`;
-        return; 
+        document.getElementById('errorText').innerHTML = `Resolution boundary limit exceeded (${w}x${h} > GPU Max ${state.maxTextureSize}).`;
+        return;
     }
     errorOverlay.style.display = 'none';
 
-    if (!initFBO(targetW, targetH)) {
-        errorOverlay.style.display = 'flex';
-        document.getElementById('errorText').innerText = "Shader pipeline framebuffer initialization failed.";
-        return;
+    gl.bindVertexArray(state.vao);
+
+    if (state.noiseDirty) {
+        if (!ensureFBO(w, h)) {
+            errorOverlay.style.display = 'flex';
+            document.getElementById('errorText').innerText = "Shader pipeline framebuffer initialization failed.";
+            return;
+        }
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+        gl.viewport(0, 0, w, h);
+        gl.useProgram(state.programs.noise);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
+        gl.uniform1f(state.uniforms.noise.u_ksize, ksize);
+        gl.uniform1f(state.uniforms.noise.u_density, density);
+        gl.uniform1i(state.uniforms.noise.u_colorMode, colorMode);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        state.noiseDirty = false;
     }
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
-    gl.viewport(0, 0, targetW, targetH);
-    gl.useProgram(state.programs.noise);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
-    gl.uniform1i(gl.getUniformLocation(state.programs.noise, "u_image"), 0);
-    gl.uniform2f(gl.getUniformLocation(state.programs.noise, "u_resolution"), state.imageWidth, state.imageHeight);
-    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_ksize"), ksize);
-    gl.uniform1f(gl.getUniformLocation(state.programs.noise, "u_density"), density);
-    gl.uniform1i(gl.getUniformLocation(state.programs.noise, "u_colorMode"), colorMode);
-
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.canvas.width = state.imageWidth;
-    gl.canvas.height = state.imageHeight;
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    if (gl.canvas.width !== w || gl.canvas.height !== h) {
+        gl.canvas.width = w;
+        gl.canvas.height = h;
+    }
+    gl.viewport(0, 0, w, h);
 
     gl.useProgram(state.programs.composite);
-    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.quad);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, state.textures.original);
-    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_original"), 0);
-    
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, state.textures.noiseComp);
-    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_noise"), 1);
-    
-    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_mix"), mix);
-    gl.uniform2f(gl.getUniformLocation(state.programs.composite, "u_resolution"), state.imageWidth, state.imageHeight);
-    gl.uniform1f(gl.getUniformLocation(state.programs.composite, "u_ksize"), ksize);
-    gl.uniform1i(gl.getUniformLocation(state.programs.composite, "u_colorMode"), colorMode);
 
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.uniform1f(state.uniforms.composite.u_mix, mix);
+    gl.uniform1f(state.uniforms.composite.u_totalSamples, ksize * ksize);
+    gl.uniform1i(state.uniforms.composite.u_colorMode, colorMode);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function scheduleRender() {
+    if (state.rafPending) return;
+    state.rafPending = true;
+    requestAnimationFrame(() => {
+        state.rafPending = false;
+        render();
+    });
 }
 
 function setMode(mode) {
+    if (state.params.colorMode === mode) return;
     state.params.colorMode = mode;
     const grayBtn = document.getElementById('modeGrayBtn');
     const colorBtn = document.getElementById('modeColorBtn');
@@ -913,40 +1005,62 @@ function setMode(mode) {
         grayBtn.classList.remove('active');
     }
     
-    debounceRender();
+    state.noiseDirty = true;
+    scheduleRender();
 }
 
 function setupUI() {
     const ids = ['fileInput', 'mixSlider', 'ksizeSlider', 'densitySlider', 'saveBtn', 'dropZone', 'highResToggle', 'formatSelect', 'qualitySlider', 'qualityGroup'];
     const [fi, ms, ks, ds, sb, dz, hr, fsel, qSlider, qGroup] = ids.map(id => document.getElementById(id));
 
-    fi.onchange = e => handleFile(e.target.files[0]);
+    fi.onchange = e => {
+        if (e.target.files[0]) handleFile(e.target.files[0]);
+        e.target.value = '';
+    };
     
     dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover'); };
     dz.ondragleave = e => { e.preventDefault(); dz.classList.remove('dragover'); };
-    dz.ondrop = e => { e.preventDefault(); dz.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); };
+    dz.ondrop = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        dz.classList.remove('dragover');
+        if (e.dataTransfer && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    };
+
+    // Prevent accidental drops outside #dropZone from navigating the window
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => {
+        e.preventDefault();
+        dz.classList.remove('dragover');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+            handleFile(e.dataTransfer.files[0]);
+        }
+    });
 
     ms.oninput = e => { 
         state.params.mix = +e.target.value; 
         document.getElementById('mixVal').innerText = state.params.mix.toFixed(2); 
-        requestAnimationFrame(render); 
+        scheduleRender();
     };
 
     ks.oninput = e => { 
         state.params.ksize = +e.target.value; 
         document.getElementById('ksizeVal').innerText = state.params.ksize;
-        debounceRender(); 
+        state.noiseDirty = true;
+        state.dimsDirty = true;
+        scheduleRender();
     };
 
     ds.oninput = e => { 
         state.params.density = +e.target.value; 
         document.getElementById('densityVal').innerText = state.params.density.toFixed(1); 
-        debounceRender(); 
+        state.noiseDirty = true;
+        scheduleRender();
     };
     
     hr.onchange = e => {
         state.params.highRes = e.target.checked;
-        if(state.rawImage) processImageForTexture(state.rawImage);
+        if (state.rawImage) processImageForTexture(state.rawImage, null, state.rawIsOpaque);
     };
 
     // Format Selector Logic
@@ -962,60 +1076,141 @@ function setupUI() {
     };
 
     sb.onclick = () => {
+        if (state.rafPending || state.noiseDirty) {
+            state.rafPending = false;
+            render();
+        }
+
         const isJpeg = state.params.format === 'jpeg';
         const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
-        
-        let dataUrl = document.getElementById('glCanvas').toDataURL(mimeType, state.params.quality);
-
-        if (isJpeg && state.exifData) {
-            try {
-                const exifStr = piexif.dump(state.exifData);
-                dataUrl = piexif.insert(exifStr, dataUrl);
-            } catch (err) {
-                console.warn("EXIF integration failed:", err);
-            }
-        }
-
-        const link = document.createElement('a');
         const activeName = document.getElementById('fileName').innerText.replace(/\.[^/.]+$/, "");
-        link.download = `${activeName}_noise_output.${isJpeg ? 'jpg' : 'png'}`;
-        link.href = dataUrl;
-        link.click();
+        const filename = `${activeName}_noise_output.${isJpeg ? 'jpg' : 'png'}`;
+
+        document.getElementById('glCanvas').toBlob(blob => {
+            if (!blob) return;
+
+            if (isJpeg && state.exifData && typeof piexif !== 'undefined') {
+                try {
+                    const exifStr = piexif.dump(state.exifData);
+                    const segLen = exifStr.length + 2;
+                    if (segLen <= 0xffff) {
+                        const app1 = new Uint8Array(2 + segLen);
+                        app1[0] = 0xff;
+                        app1[1] = 0xe1;
+                        app1[2] = (segLen >> 8) & 0xff;
+                        app1[3] = segLen & 0xff;
+                        for (let i = 0; i < exifStr.length; i++) {
+                            app1[4 + i] = exifStr.charCodeAt(i) & 0xff;
+                        }
+                        blob = new Blob([blob.slice(0, 2), app1, blob.slice(2)], { type: 'image/jpeg' });
+                    }
+                } catch (err) {
+                    console.warn("EXIF integration failed:", err);
+                }
+            }
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = url;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }, mimeType, state.params.quality);
     };
 }
 
-function handleFile(f) {
+function bytesToBinaryString(bytes) {
+    const chunkSize = 0x8000;
+    let out = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return out;
+}
+
+function findJpegSosEnd(bytes) {
+    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return -1;
+    let pos = 2;
+    while (pos + 1 < bytes.length) {
+        if (bytes[pos] !== 0xff) return -1;
+        const marker = bytes[pos + 1];
+        if (marker === 0xda) return pos + 2;
+        if (marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) return -1;
+        if (pos + 3 >= bytes.length) return -1;
+        const segLen = (bytes[pos + 2] << 8) | bytes[pos + 3];
+        if (segLen < 2) return -1;
+        pos += 2 + segLen;
+    }
+    return -1;
+}
+
+async function extractJpegExif(file) {
+    if (file.type !== 'image/jpeg' || typeof piexif === 'undefined') return null;
+    try {
+        const headBytes = new Uint8Array(await file.slice(0, 262144).arrayBuffer());
+        const sosEnd = findJpegSosEnd(headBytes);
+        if (sosEnd > 0) {
+            return piexif.load(bytesToBinaryString(headBytes.subarray(0, sosEnd)));
+        }
+        const fullBytes = new Uint8Array(await file.arrayBuffer());
+        const fullSosEnd = findJpegSosEnd(fullBytes);
+        const slice = fullSosEnd > 0 ? fullBytes.subarray(0, fullSosEnd) : fullBytes;
+        return piexif.load(bytesToBinaryString(slice));
+    } catch (err) {
+        console.warn("No valid EXIF header segments found", err);
+        return null;
+    }
+}
+
+async function handleFile(f) {
     if (!f || !f.type.startsWith('image/')) return;
-    
-    document.getElementById('loader').style.display = 'flex';
-    
-    const r = new FileReader();
-    r.onload = e => {
-        if (f.type === 'image/jpeg') {
-            try {
-                state.exifData = piexif.load(e.target.result);
-            } catch (err) {
-                state.exifData = null;
-                console.warn("No valid EXIF header segments found", err);
-            }
-        } else {
-            state.exifData = null; 
+
+    const currentLoadId = ++state.loadId;
+    const loader = document.getElementById('loader');
+    loader.style.display = 'flex';
+
+    const objectUrl = URL.createObjectURL(f);
+    try {
+        const decodePromise = new Promise((resolve, reject) => {
+            const img = new Image();
+            img.decoding = 'async';
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = objectUrl;
+        });
+
+        const [img, exifData] = await Promise.all([
+            decodePromise,
+            extractJpegExif(f)
+        ]);
+
+        if (currentLoadId !== state.loadId) {
+            URL.revokeObjectURL(objectUrl);
+            return;
         }
 
-        const img = new Image();
-        img.onload = () => { 
-            state.rawImage = img; 
-            processImageForTexture(img, f.name); 
-        };
-        img.src = e.target.result;
-    };
-    r.readAsDataURL(f);
+        if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+        state.objectUrl = objectUrl;
+        state.exifData = exifData;
+        state.rawImage = img;
+        state.rawIsOpaque = f.type === 'image/jpeg';
+        processImageForTexture(img, f.name, state.rawIsOpaque);
+    } catch (err) {
+        URL.revokeObjectURL(objectUrl);
+        console.warn("Failed to decode image:", err);
+    } finally {
+        if (currentLoadId === state.loadId) {
+            loader.style.display = 'none';
+        }
+    }
 }
 
-function processImageForTexture(img, name) {
-    if(name) document.getElementById('fileName').innerText = name;
+function processImageForTexture(img, name, isOpaque = false) {
+    if (name) document.getElementById('fileName').innerText = name;
     
-    let w = img.width, h = img.height;
+    const origW = img.naturalWidth || img.width;
+    const origH = img.naturalHeight || img.height;
+    let w = origW, h = origH;
     const limit = state.params.highRes ? state.maxTextureSize : Math.floor(state.maxTextureSize / 12);
     
     if (w > limit || h > limit) {
@@ -1023,11 +1218,15 @@ function processImageForTexture(img, name) {
         if (w > h) { w = limit; h = Math.floor(w / r); } else { h = limit; w = Math.floor(h * r); }
     }
 
+    state.origWidth = origW;
+    state.origHeight = origH;
     state.imageWidth = w;
     state.imageHeight = h;
     if (state.textures.original) state.gl.deleteTexture(state.textures.original);
-    state.textures.original = createTextureFromImage(state.gl, img, w, h);
-    debounceRender();
+    state.textures.original = createTextureFromImage(state.gl, img, w, h, isOpaque);
+    state.noiseDirty = true;
+    state.dimsDirty = true;
+    render();
 }
 
 function createPlaceholderImage() {
@@ -1046,21 +1245,12 @@ function createPlaceholderImage() {
     ctx.arc(s/2,s/2,s/3,0,Math.PI*2); 
     ctx.fill();
     
-    state.rawImage = c; 
-    processImageForTexture(c, "template_color.png");
+    state.rawImage = c;
+    state.rawIsOpaque = true;
+    processImageForTexture(c, "template_color.png", true);
 }
 
-let tid;
-function debounceRender() {
-    document.getElementById('loader').style.display = 'flex';
-    clearTimeout(tid);
-    tid = setTimeout(() => requestAnimationFrame(() => { 
-        render(); 
-        document.getElementById('loader').style.display = 'none'; 
-    }), 60);
-}
-
-window.onload = init;
+window.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
